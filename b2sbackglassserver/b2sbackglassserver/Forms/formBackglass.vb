@@ -7,6 +7,8 @@ Imports Microsoft.Win32
 
 Public Class formBackglass
     Inherits System.Windows.Forms.Form
+    Implements IDisposable
+
     Private Declare Function SetForegroundWindow Lib "user32.dll" (ByVal hwnd As IntPtr) As Integer
     Private Declare Function IsWindow Lib "user32.dll" (ByVal hwnd As IntPtr) As Boolean
 
@@ -34,6 +36,8 @@ Public Class formBackglass
     Private tableTimer As Timer = Nothing
     Private B2STimer As Timer = Nothing
     Private tableHandle As Integer = 0
+
+    private pipeThread As System.Threading.Thread = Nothing
 #End If
 
     Private rotateTimer As Timer = Nothing
@@ -59,7 +63,6 @@ Public Class formBackglass
 #End Region 'Properties
 
 #Region "constructor and closing"
-
 
     Public Sub New()
 
@@ -161,6 +164,12 @@ Public Class formBackglass
         B2STimer = New Timer
         B2STimer.Interval = 13
         AddHandler B2STimer.Tick, AddressOf B2STimer_Tick
+
+        ' create thread to listen for changes
+        pipeThread = New Threading.Thread(AddressOf PollNamedPipeData)
+        pipeThread.IsBackground = True
+        runPipeThread = True
+        pipeThread.Start()
 #End If
 
         ' create rotation timer
@@ -254,6 +263,35 @@ Public Class formBackglass
 
     End Sub
 
+    'Das Formular überschreibt den Löschvorgang, um die Komponentenliste zu bereinigen.
+    <System.Diagnostics.DebuggerNonUserCode()>
+    Protected Overrides Sub Dispose(ByVal disposing As Boolean)
+        Try
+#If B2S = "DLL" Then
+            ' stop all timers as DLL
+            If snifferTimer IsNot Nothing Then snifferTimer.Stop()
+#Else
+         WriteNamedPipeLog("Disposing")
+       
+         ' Close named pipe
+        runPipeThread = False
+        System.Threading.Thread.Sleep(10)
+
+
+        ' stop all timers as EXE
+        If tableTimer IsNot Nothing Then tableTimer.Stop()
+        If B2STimer IsNot Nothing Then B2STimer.Stop()
+
+#End If
+
+            If disposing AndAlso components IsNot Nothing Then
+                components.Dispose()
+            End If
+        Finally
+            MyBase.Dispose(disposing)
+        End Try
+    End Sub
+
     Private Sub formBackglass_FormClosing(sender As Object, e As System.Windows.Forms.FormClosingEventArgs) Handles Me.FormClosing
 
         On Error Resume Next
@@ -264,9 +302,14 @@ Public Class formBackglass
         ' stop all timers as DLL
         If snifferTimer IsNot Nothing Then snifferTimer.Stop()
 #Else
+         WriteNamedPipeLog("closing")
+         ' Close named pipe
+        runPipeThread = False
+
         ' stop all timers as EXE
         If tableTimer IsNot Nothing Then tableTimer.Stop()
         If B2STimer IsNot Nothing Then B2STimer.Stop()
+
 #End If
         ' unload DMD form stuff
         If formDMD IsNot Nothing Then
@@ -364,6 +407,7 @@ Public Class formBackglass
 #If B2S = "DLL" Then
         If snifferTimer IsNot Nothing Then RemoveHandler snifferTimer.Tick, AddressOf SnifferTimer_Tick
 #Else
+        runPipeThread = False
         If tableTimer IsNot Nothing Then RemoveHandler tableTimer.Tick, AddressOf TableTimer_Tick
         If B2STimer IsNot Nothing Then RemoveHandler B2STimer.Tick, AddressOf B2STimer_Tick
 #End If
@@ -536,6 +580,8 @@ Public Class formBackglass
 
         ' start table check timer
         tableTimer.Start()
+
+       
 #End If
     End Sub
 
@@ -634,22 +680,34 @@ Public Class formBackglass
     Private sounds As Generic.Dictionary(Of String, Integer) = Nothing
 
     Private Sub PollingData()
+        ' WriteNamedPipeLog("polling data")
+         'create an empty text file if it does not exist at c:\vpinball\b2stest.txt
+         'Dim testfile As String = "c:\vpinball\b2stest.txt"
+
+         'If Not File.Exists(testfile) Then
+         '   Dim fs As FileStream = File.Create(testfile)
+         '   fs.Close()  
+         'End If
 
         ' initialize the value storage - this storage is to avoid too much update traffic
         InitializePollArrays()
 
+         ' Poll named pipe for data
+        'PollNamedPipeData()
+
         ' open registry sub key
-        Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+        'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
 
             ' get current data
-            Dim lampsData As String = GetLampsPollingData(regkey)
-            Dim solenoidsData As String = GetSolenoidsPollingData(regkey)
-            Dim gistringsData As String = GetGIStringsPollingData(regkey)
-            Dim b2sSetsData As String = GetB2SSetsPollingData(regkey)
-            Dim mechsData As Integer() = GetMechPollingData(regkey)
-            Dim animationsdata As String = GetAnimationsPollingData(regkey)
-            Dim rotationsdata As String = GetRotationsPollingData(regkey)
-            Dim soundsdata As String = GetSoundsPollingData(regkey)
+            Dim lampsData As String = B2SLamps ' GetLampsPollingData(regkey)
+            Dim gistringsData As String = B2SGIStrings ' GetGIStringsPollingData(regkey)
+            Dim b2sSetsData As String = B2SSetDataSB  ' GetB2SSetsPollingData(regkey)
+            Dim solenoidsData As String = B2SSolenoids ' GetSolenoidsPollingData(regkey)
+            Dim mechsData As Integer() = B2SMechs 'GetMechPollingData(regkey)
+            Dim animationsdata As String = B2SAnimations 'GetAnimationsPollingData(regkey)
+            Dim rotationsdata As String = B2SRotations 'GetRotationsPollingData(regkey)
+            Dim soundsdata As String = B2SSounds 'GetSoundsPollingData(regkey)
+
 
             ' first of all have a look at the both top images
             Dim topVisible As Boolean = lastTopVisible
@@ -696,27 +754,32 @@ Public Class formBackglass
             GetThruAllMechs(mechsData)
 
             ' get thru all LEDs
-            GetThruAllLEDs(regkey)
+            'GetThruAllLEDs(regkey)
+            GetThruAllLEDs()
 
             ' get thru all animations
-            GetThruAllAnimations(regkey, animationsdata)
+            'GetThruAllAnimations(regkey, animationsdata)
+            GetThruAllAnimations(nothing, animationsdata)
 
             ' get thru all rotations
-            GetThruAllRotations(regkey, rotationsdata)
+            'GetThruAllRotations(regkey, rotationsdata)
+            GetThruAllRotations(nothing, rotationsdata)
 
             ' get thru all sounds
-            GetThruAllSounds(regkey, soundsdata)
+            'GetThruAllSounds(regkey, soundsdata)
+            GetThruAllSounds(nothing, soundsdata)
 
             ' maybe hide score display
-            GetThruAllScoreDisplays(regkey)
+            'GetThruAllScoreDisplays(regkey)
+            GetThruAllScoreDisplays(nothing)
 
             ' maybe show or hide some illus by groupname
-            GetThruAllIlluGroups(regkey)
+            GetThruAllIlluGroups() ' (regkey)
 
             ' maybe position something
-            GetThruAllPositions(regkey)
+            GetThruAllPositions() ' (regkey)
 
-        End Using
+        'End Using
 
     End Sub
 
@@ -751,12 +814,17 @@ Public Class formBackglass
 
     End Sub
 
+    
     Private Function GetLampsPollingData(ByVal regkey As RegistryKey) As String
 
         Dim lampsData As String = String.Empty
 
         If B2SData.UseRomLamps OrElse B2SData.UseAnimationLamps Then
-            lampsData = regkey.GetValue("B2SLamps", New String("0", 401))
+            lampsData = B2SLamps
+            
+            'if lampsData.length <= 0 then lampsData = new String("0", 401)
+
+            'lampsData = regkey.GetValue("B2SLamps", New String("0", 401))
             'If B2SSettings.IsROMControlled AndAlso lampsData.Contains("2") Then
             '    regkey.SetValue("B2SLamps", lampsData.Replace("2", "0"))
             'End If
@@ -810,7 +878,7 @@ Public Class formBackglass
 
         If B2SData.UseRomMechs Then
             For i As Integer = 1 To Math.Min(B2SData.UsedRomMechIDs.Count, 5)
-                mechsData(i) = regkey.GetValue("B2SMechs" & i.ToString(), -1)
+                mechsData(i) = B2SMechs(i) 'regkey.GetValue("B2SMechs" & i.ToString(), -1)
             Next
         End If
 
@@ -822,7 +890,7 @@ Public Class formBackglass
         Dim animationsdata As String = String.Empty
 
         If B2SAnimation.AreThereAnimations Then
-            animationsdata = regkey.GetValue("B2SAnimations", String.Empty)
+            animationsdata = B2SAnimations ' regkey.GetValue("B2SAnimations", String.Empty)
         End If
 
         Return animationsdata
@@ -832,7 +900,7 @@ Public Class formBackglass
 
         Dim rotationsdata As String = String.Empty
 
-        rotationsdata = regkey.GetValue("B2SRotations", String.Empty)
+        rotationsdata = B2SRotations 'regkey.GetValue("B2SRotations", String.Empty)
 
         Return rotationsdata
 
@@ -841,7 +909,7 @@ Public Class formBackglass
 
         Dim soundsdata As String = String.Empty
 
-        soundsdata = regkey.GetValue("B2SSounds", String.Empty)
+        soundsdata = B2SSounds 'regkey.GetValue("B2SSounds", String.Empty)
 
         Return soundsdata
 
@@ -1408,11 +1476,11 @@ Public Class formBackglass
 
     End Sub
 
-    Private Sub GetThruAllLEDs(ByVal regkey As RegistryKey)
+    Private Sub GetThruAllLEDs() '(ByVal regkey As RegistryKey)
 
         If B2SData.UseLEDs OrElse B2SData.UseLEDDisplays OrElse B2SData.UseReels Then
             For digit As Integer = 1 To B2SData.ScoreMaxDigit
-                Dim currentvalue As Integer = regkey.GetValue("B2SLED" & digit.ToString(), 0)
+                Dim currentvalue As Integer = B2SLeds(digit) 'regkey.GetValue("B2SLED" & digit.ToString(), 0)
                 If leds(digit) <> currentvalue Then
                     leds(digit) = currentvalue
                     If B2SData.LEDs.ContainsKey("LEDBox" & digit.ToString()) AndAlso B2SSettings.UsedLEDType = B2SSettings.eLEDTypes.Rendered Then
@@ -1477,7 +1545,8 @@ Public Class formBackglass
                     End If
                 Next
                 If writeAnimationsData Then
-                    regkey.SetValue("B2SAnimations", animationsdata)
+                    'regkey.SetValue("B2SAnimations", animationsdata)
+                     WriteNamedPipeLog("**** NEED TO UPDATE ANIMATION: " & animationsdata)
                 End If
             End If
         End If
@@ -1532,7 +1601,9 @@ Public Class formBackglass
                 End If
             Next
             If writeSoundsData Then
-                regkey.SetValue("B2SSounds", soundsdata)
+                'regkey.SetValue("B2SSounds", soundsdata)
+                'TODO: implement sound data write back
+                WriteNamedPipeLog("**** NEED TO UPDATE SOUND: " & soundsdata)   
             End If
         End If
 
@@ -1540,9 +1611,9 @@ Public Class formBackglass
 
     Private Sub GetThruAllScoreDisplays(ByVal regkey As RegistryKey)
 
-        Dim hide As Integer = regkey.GetValue("B2SHideScoreDisplays", -1)
+        Dim hide As Integer = B2SHideScoreDisplays ' regkey.GetValue("B2SHideScoreDisplays", -1)
         If hide <> -1 Then
-            regkey.DeleteValue("B2SHideScoreDisplays", False)
+            ' regkey.DeleteValue("B2SHideScoreDisplays", False)
             If hide = 0 Then
                 ' show all score displays
                 ShowScoreDisplays()
@@ -1554,11 +1625,13 @@ Public Class formBackglass
 
     End Sub
 
-    Private Sub GetThruAllIlluGroups(ByVal regkey As RegistryKey)
+    Private Sub GetThruAllIlluGroups()
 
-        Dim illugroups As String = regkey.GetValue("B2SIlluGroupsByName", String.Empty)
+        Dim illugroups As String = B2SIlluGroupsByName ' regkey.GetValue("B2SIlluGroupsByName", String.Empty)
         If Not String.IsNullOrEmpty(illugroups) Then
-            regkey.DeleteValue("B2SIlluGroupsByName", False)
+            'regkey.DeleteValue("B2SIlluGroupsByName", False)
+            B2SIlluGroupsByName = string.Empty
+
             ' get thru all illu groups
             For Each illugroupinfo As String In illugroups.Split(Chr(1))
                 ' only do the lightning stuff if the group has a name
@@ -1582,16 +1655,18 @@ Public Class formBackglass
 
     End Sub
 
-    Private Sub GetThruAllPositions(ByVal regkey As RegistryKey)
+    Private Sub GetThruAllPositions() '(ByVal regkey As RegistryKey)
         Try
 
-            Dim ledPositions As String = regkey.GetValue("B2SPositions", String.Empty)
+            Dim ledPositions As String = B2SPositions 'regkey.GetValue("B2SPositions", String.Empty)
             If Not String.IsNullOrEmpty(ledPositions) AndAlso ledPositions.Contains(",") Then
                 Dim id As Integer = 0
                 Dim xpos As Integer = 0
                 Dim ypos As Integer = 0
 
-                regkey.DeleteValue("B2SPositions", False)
+                'regkey.DeleteValue("B2SPositions", False)
+                B2SPositions = String.Empty
+
                 ' get thru all positions
                 For Each ledPosition As String In ledPositions.Split(Chr(1))
                     If Not String.IsNullOrEmpty(ledPosition) Then
@@ -3549,5 +3624,514 @@ Public Class formBackglass
     End Function
 #End Region
 
+#If B2S = "EXE" Then
+#Region "Named Pipe polling"
+
+ ' Windows API declarations
+    Private Declare Function PeekNamedPipe Lib "kernel32.dll" (
+        ByVal hNamedPipe As IntPtr,
+        ByVal lpBuffer As IntPtr,
+        ByVal nBufferSize As Integer,
+        ByRef lpBytesRead As Integer,
+        ByRef lpTotalBytesAvail As Integer,
+        ByRef lpBytesLeftThisMessage As Integer) As Boolean
+
+    Private pipeServer As IO.Pipes.NamedPipeServerStream = Nothing
+    Private pipeReader As IO.StreamReader = Nothing
+    Private isPipeConnected As Boolean = False
+    Private Const namedPipeLogName As String = "b2s-server-namedpipelog.txt"
+    Private namedPipeLogWriter As IO.StreamWriter = Nothing
+    private pollNamedPipeCounter As Integer = 0
+    Private namedPipeLogEnabled As Boolean = True
+
+    Private B2SLamps as String = ""
+    Private B2SGIStrings as String = ""
+    Private B2SSolenoids as String = ""
+    Private B2SSetDataSB as String = ""
+    Private B2SLeds() as integer = New Integer(100) {}
+    Private B2SMechs() as integer = New Integer(100) {}
+    Private B2SIlluGroupsByName as String = ""
+    Private B2SPositions as String = ""
+    Private B2SAnimations as String = ""
+    Private B2SRotations as String = ""
+    Private B2SSounds as String = ""
+    Private B2SHideScoreDisplays as Integer = 0
+
+    Private runPipeThread as Boolean = False
+
+     ''' <summary>
+    ''' Checks how many bytes are available to read from the named pipe without actually reading them.
+    ''' </summary>
+    ''' <returns>Number of bytes available, or -1 if pipe is not connected or an error occurred</returns>
+    Private Function GetNamedPipeAvailableBytes() As Integer
+        Try
+            If pipeServer Is Nothing OrElse Not isPipeConnected OrElse Not pipeServer.IsConnected Then
+                Return -1
+            End If
+
+            ' Get the pipe handle using reflection
+            Dim handleField As Reflection.FieldInfo = pipeServer.GetType().GetField("_handle", Reflection.BindingFlags.NonPublic Or Reflection.BindingFlags.Instance)
+            If handleField Is Nothing Then
+                ' Try alternative field name for different .NET versions
+                handleField = pipeServer.GetType().GetField("m_handle", Reflection.BindingFlags.NonPublic Or Reflection.BindingFlags.Instance)
+            End If
+
+            If handleField Is Nothing Then
+                WriteNamedPipeLog("Unable to access pipe handle via reflection")
+                Return -1
+            End If
+
+            Dim safeHandle As Object = handleField.GetValue(pipeServer)
+            Dim handleProperty As Reflection.PropertyInfo = safeHandle.GetType().GetProperty("DangerousGetHandle", Reflection.BindingFlags.Public Or Reflection.BindingFlags.Instance)
+            If handleProperty Is Nothing Then
+                ' Try calling the method instead
+                Dim handleMethod As Reflection.MethodInfo = safeHandle.GetType().GetMethod("DangerousGetHandle", Reflection.BindingFlags.Public Or Reflection.BindingFlags.Instance)
+                If handleMethod Is Nothing Then
+                    WriteNamedPipeLog("Unable to get pipe handle")
+                    Return -1
+                End If
+                Dim pipeHandle As IntPtr = CType(handleMethod.Invoke(safeHandle, Nothing), IntPtr)
+                Return PeekPipeBytes(pipeHandle)
+            Else
+                Dim pipeHandle As IntPtr = CType(handleProperty.GetValue(safeHandle, Nothing), IntPtr)
+                Return PeekPipeBytes(pipeHandle)
+            End If
+
+        Catch ex As Exception
+            WriteNamedPipeLog("Error getting available bytes: " & ex.Message)
+            Return -1
+        End Try
+    End Function
+
+    ''' <summary>
+    ''' Internal helper method to call PeekNamedPipe API
+    ''' </summary>
+    Private Function PeekPipeBytes(ByVal pipeHandle As IntPtr) As Integer
+        Dim bytesRead As Integer = 0
+        Dim totalBytesAvail As Integer = 0
+        Dim bytesLeftThisMessage As Integer = 0
+
+        Dim success As Boolean = PeekNamedPipe(
+            pipeHandle,
+            IntPtr.Zero,  ' We don't want to read data, just peek
+            0,            ' Buffer size is 0
+            bytesRead,
+            totalBytesAvail,
+            bytesLeftThisMessage)
+
+        If success Then
+            Return totalBytesAvail
+        Else
+            Dim errorCode As Integer = Runtime.InteropServices.Marshal.GetLastWin32Error()
+            WriteNamedPipeLog("PeekNamedPipe failed with error code: " & errorCode.ToString())
+            Return -1
+        End If
+    End Function
+
+    Private Sub WriteNamedPipeLog(ByVal message As String)
+
+        If Not namedPipeLogEnabled Then Return
+
+        Try
+            If namedPipeLogWriter Is Nothing Then
+                ' Ensure directory exists
+                Dim logDir As String = System.IO.Path.GetDirectoryName(
+                    System.Reflection.Assembly.GetExecutingAssembly().Location)
+                If Not IO.Directory.Exists(logDir) Then
+                    IO.Directory.CreateDirectory(logDir)
+                End If
+
+                ' Open or create log file (truncate mode)
+                namedPipeLogWriter = New IO.StreamWriter(
+                    System.IO.Path.Combine(logDir, namedPipeLogName), False)
+                namedPipeLogWriter.AutoFlush = True
+            End If
+
+            ' Write timestamped message
+            namedPipeLogWriter.WriteLine(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") & " - [EXE] " & message)
+
+        Catch ex As Exception
+            ' Silent fail - don't crash the form
+        End Try
+    End Sub
+
+    Private Sub InitializeNamedPipe()
+      
+        Try
+            WriteNamedPipeLog("Named pipe initializing.")
+        
+            pollNamedPipeCounter = pollNamedPipeCounter + 1
+
+            If pipeServer Is Nothing OrElse Not isPipeConnected Then
+                ' Create the named pipe as a server
+                pipeServer = New IO.Pipes.NamedPipeServerStream(
+                    "b2snamedpipe",
+                    IO.Pipes.PipeDirection.InOut,
+                    IO.Pipes.NamedPipeServerStream.MaxAllowedServerInstances,
+                    IO.Pipes.PipeTransmissionMode.Byte,
+                    IO.Pipes.PipeOptions.Asynchronous)
+
+                WriteNamedPipeLog("Named pipe created, waiting for connection...")
+                
+                ' Wait for a client to connect (with timeout)
+                Dim result As IAsyncResult = pipeServer.BeginWaitForConnection(Nothing, Nothing)
+                If result.AsyncWaitHandle.WaitOne(1000) Then ' 1000ms timeout
+                    pipeServer.EndWaitForConnection(result)
+                    pipeReader = New IO.StreamReader(pipeServer)
+                    isPipeConnected = True
+                    WriteNamedPipeLog("Named pipe connected successfully")
+                Else
+                    ' Timeout - no client connected yet
+                    WriteNamedPipeLog("Named pipe waiting for client (timeout)")
+                    isPipeConnected = False
+                    pipeServer.Close()
+                    pipeServer = Nothing
+                End If
+            End If
+        Catch ex As Exception
+            WriteNamedPipeLog("Named pipe initialization error: " & ex.Message)
+            isPipeConnected = False
+            
+            ' Clean up on error
+            If pipeServer IsNot Nothing Then
+                Try
+                    pipeServer.Close()
+                    pipeServer.Dispose()
+                Catch
+                End Try
+                pipeServer = Nothing
+            End If
+        End Try
+    End Sub
+
+    private Sub InitializeVariables()
+        isPipeConnected = False
+        pollNamedPipeCounter = 0
+        For i As Integer = 0 To B2SMechs.Length - 1
+            B2SMechs(i) = -1
+        Next
+    end sub
+
+    Private Sub PollNamedPipeData()
+       InitializeVariables
+
+       While runPipeThread 
+
+            Try
+    
+                ' Ensure pipe is connected
+                If Not isPipeConnected and pollNamedPipeCounter < 10 Then
+                    WriteNamedPipeLog("Named pipe not connected.")
+                    InitializeNamedPipe()
+                    If Not isPipeConnected Then 
+                        Threading.Thread.Sleep(100) ' Return
+                        WriteNamedPipeLog($"Not connected...sleeping.")
+                    End If
+                End If
+
+                ' Check if data is available
+                If runPipeThread AndAlso pipeServer IsNot Nothing AndAlso pipeServer.IsConnected AndAlso pipeReader IsNot Nothing Then
+                
+                    ' Only read if there's data available (non-blocking)
+                    If pipeServer.CanRead AndAlso Not pipeReader.EndOfStream Then
+                        While runPipeThread AndAlso Not pipeReader.EndOfStream
+                            Dim line As String = pipeReader.ReadLine()
+
+                            If Not String.IsNullOrEmpty(line) Then
+                                'WriteNamedPipeLog($"RAW: {line}")
+                                ProcessNamedPipeData(line)
+                            End If
+                        End While
+                        If Not runPipeThread Then
+                            WriteNamedPipeLog("[PollNamedPipeData] Stopping read loop due to runPipeThread flag.")
+                            Exit While
+                        End If
+                    End If
+
+                End If
+               ' WriteNamedPipeLog("Size of pipe available bytes: " & GetNamedPipeAvailableBytes().ToString())
+                
+                ' Sleep briefly due to inactivity
+                if runPipeThread then
+                    Threading.Thread.Sleep(10)
+                    WriteNamedPipeLog($"Sleeping due to inactivity.")
+                end if
+
+            Catch ex As IO.IOException
+                ' Pipe disconnected
+                WriteNamedPipeLog("Named pipe disconnected: " & ex.Message)
+                CloseNamedPipe()
+                isPipeConnected = False
+            Catch ex As Exception
+                WriteNamedPipeLog("Named pipe polling error: " & ex.Message)
+            End Try
+
+        End While
+
+         ' exit thread
+        WriteNamedPipeLog("Exiting pipe thread")
+        CloseNamedPipe()
+        isPipeConnected = False
+
+    End Sub
+
+    Private Sub ProcessNamedPipeData(ByVal data As String)
+
+        if data.StartsWith("B2SShutdown", StringComparison.OrdinalIgnoreCase) then
+            'dll will pass a 1 but there's no other option, so just shut down
+            WriteNamedPipeLog("B2SShutdown received. Shutting down B2S EXE.")
+            runPipeThread = False
+            System.Threading.Thread.Sleep(25)
+            Me.Close()
+            Exit Sub
+        end if
+
+        If data.StartsWith("B2SLamps|", StringComparison.OrdinalIgnoreCase) Then
+            B2SLamps = data.Split("|"c)(1).Trim()
+            WriteNamedPipeLog("B2SLamps received:" & B2SLamps)
+            Exit Sub
+        End If
+
+        If data.StartsWith("B2SGIStrings|", StringComparison.OrdinalIgnoreCase) Then
+            B2SGIStrings = data.Split("|"c)(1).Trim()
+            WriteNamedPipeLog("B2SGIStrings received:" & B2SGIStrings)
+            Exit Sub
+        End If
+
+        If data.StartsWith("B2SSolenoids|", StringComparison.OrdinalIgnoreCase) Then
+            B2SSolenoids = data.Split("|"c)(1).Trim()
+            WriteNamedPipeLog("B2SSolenoids received:" & B2SSolenoids)
+            Exit Sub
+        End If
+
+        If data.StartsWith("B2SSetData|", StringComparison.OrdinalIgnoreCase) Then
+            B2SSetDataSB = data.Split("|"c)(1).Trim()
+            WriteNamedPipeLog("B2SSetData received:" & B2SSetDataSB)
+            Exit Sub
+        End If
+
+        'b2sled|{n}=value
+        If data.StartsWith("B2SLED|", StringComparison.OrdinalIgnoreCase) then
+            Dim leddata as string = data.split("|"c)(1).trim()
+            'leddata example: "0=1"
+            WriteNamedPipeLog("B2SLED received:" & leddata)
+            Dim ledparts as string() = leddata.split("="c)
+            if ledparts.length >= 2 then
+                Dim digit as integer = cint(ledparts(0).trim())
+                Dim value as integer = cint(ledparts(1).trim())
+                B2SLeds(digit) = value
+            end if
+            Exit Sub
+        End If 
+
+        if data.StartsWith("B2SMechs|", StringComparison.OrdinalIgnoreCase) then
+            dim mechdata as string = data.split("|"c)(1).trim()
+            'mechdata example: "2=1"
+            WriteNamedPipeLog("B2SMechs received" & mechdata)
+            dim mechparts as string() = mechdata.split("="c)
+            if mechparts.length >= 2 then
+                dim mechid as integer = cint(mechparts(0).trim())
+                dim mechstate as integer = cint(mechparts(1).trim())
+                B2SMechs(mechid) = mechstate
+            end if
+            Exit Sub
+        End if
+
+        if data.StartsWith("B2SIlluGroupsByName|", StringComparison.OrdinalIgnoreCase) then
+            B2SIlluGroupsByName = data.split("|"c)(1).trim()
+            WriteNamedPipeLog("B2SIlluGroupsByName received:" & B2SIlluGroupsByName)
+            Exit Sub
+        End If
+
+        if data.StartsWith("B2SPositions|", StringComparison.OrdinalIgnoreCase) then
+            B2SPositions = data.split("|"c)(1).trim()
+            WriteNamedPipeLog("B2SPositions received:" & B2SPositions)
+            Exit Sub
+        End If
+
+        if data.StartsWith("B2SAnimations|", StringComparison.OrdinalIgnoreCase) then
+            B2SAnimations = data.split("|"c)(1).trim()
+            WriteNamedPipeLog("B2SAnimations received:" & B2SAnimations)
+            Exit Sub
+        End If
+
+        If data.StartsWith("B2SRotations|", StringComparison.OrdinalIgnoreCase) Then
+            B2SRotations = data.Split("|"c)(1).Trim()
+            WriteNamedPipeLog("B2SRotations received:" & B2SRotations)
+            Exit Sub
+        End If
+
+        if data.StartsWith("B2SHideScoreDisplays|", StringComparison.OrdinalIgnoreCase) then
+            dim hidedata as string = data.split("|"c)(1).trim()
+            Integer.TryParse(hidedata, B2SHideScoreDisplays)
+            WriteNamedPipeLog("B2SHideScoreDisplays received:" & B2SHideScoreDisplays.toString())
+            Exit Sub
+        end if
+
+
+        WriteNamedPipeLog("Unknown data: " & data)
+        Exit Sub
+
+        'below is all experimental - individual events, etc
+
+        Try
+            ' Expected format: "KEY=VALUE" (e.g., "L15=1" for Lamp 15, state 1)
+            ' or "TYPE,ID,VALUE" format similar to registry
+
+            If data.Contains("=") Then
+                ' Key=Value format
+                Dim parts As String() = data.Split("="c)
+                If parts.Length >= 2 Then
+                    Dim key As String = parts(0).Trim()
+                    Dim value As String = parts(1).Trim()
+
+                    WriteNamedPipeLog("PARSED KEY=VALUE: Key=" & key & ", Value=" & value)
+
+                    ' Route to appropriate handler based on key prefix
+                    If key.StartsWith("L") Then
+                        ProcessNamedPipeLamp(key, value)
+                    ElseIf key.StartsWith("S") Then
+                        ProcessNamedPipeSolenoid(key, value)
+                    ElseIf key.StartsWith("G") Then
+                        ProcessNamedPipeGIString(key, value)
+                    ElseIf key.StartsWith("D") Then
+                        ProcessNamedPipeLED(key, value)
+                    ElseIf key.StartsWith("M") Then
+                        ProcessNamedPipeMech(key, value)
+                    End If
+                End If
+            ElseIf data.Contains(",") Then
+                ' Comma-separated format: TYPE,ID,VALUE
+                Dim parts As String() = data.Split(","c)
+                If parts.Length >= 3 Then
+                    Dim dataType As String = parts(0).Trim()
+                    Dim id As Integer = CInt(parts(1).Trim())
+                    Dim value As Integer = CInt(parts(2).Trim())
+
+                    WriteNamedPipeLog("PARSED CSV: Type=" & dataType & ", ID=" & id.ToString() & ", Value=" & value.ToString())
+
+                    Select Case dataType.ToUpper()
+                        Case "L"
+                            ProcessNamedPipeLampData(id, value)
+                        Case "S"
+                            ProcessNamedPipeSolenoidData(id, value)
+                        Case "G"
+                            ProcessNamedPipeGIStringData(id, value)
+                        Case "D"
+                            ProcessNamedPipeLEDData(id, value)
+                        Case "M"
+                            ProcessNamedPipeMechData(id, value)
+                    End Select
+                End If
+            Else
+                WriteNamedPipeLog("UNRECOGNIZED FORMAT: " & data)
+            End If
+
+        Catch ex As Exception
+            WriteNamedPipeLog("Error processing data: " & ex.Message & " | Data: " & data)
+        End Try
+    End Sub
+
+    Private Sub ProcessNamedPipeLamp(ByVal key As Integer, ByVal value As Integer)
+        ' Extract lamp ID from key (e.g., "L15" -> 15)
+        ' Dim lampId As Integer = CInt(key.Substring(1))
+        ' Dim lampState As Integer = CInt(value)
+        WriteNamedPipeLog("LAMP: ID=" & key.ToString() & ", State=" & value.ToString())
+        ProcessNamedPipeLampData(key, value)
+    End Sub
+
+    Private Sub ProcessNamedPipeLampData(ByVal lampId As Integer, ByVal lampState As Integer)
+        ' Add to lamps array for processing
+        If lampId >= 0 AndAlso lampId < lamps.Length Then
+            lamps(lampId) = lampState
+        End If
+    End Sub
+
+    Private Sub ProcessNamedPipeSolenoid(ByVal key As String, ByVal value As String)
+        Dim solenoidId As Integer = CInt(key.Substring(1))
+        Dim solenoidState As Integer = CInt(value)
+        WriteNamedPipeLog("SOLENOID: ID=" & solenoidId.ToString() & ", State=" & solenoidState.ToString())
+        ProcessNamedPipeSolenoidData(solenoidId, solenoidState)
+    End Sub
+
+    Private Sub ProcessNamedPipeSolenoidData(ByVal solenoidId As Integer, ByVal solenoidState As Integer)
+        ' Add to solenoids array for processing
+        If solenoidId >= 0 AndAlso solenoidId < solenoids.Length Then
+            solenoids(solenoidId) = solenoidState
+        End If
+    End Sub
+
+    Private Sub ProcessNamedPipeGIString(ByVal key As String, ByVal value As String)
+        Dim giStringId As Integer = CInt(key.Substring(1))
+        Dim giStringState As Integer = CInt(value)
+        WriteNamedPipeLog("GISTRING: ID=" & giStringId.ToString() & ", State=" & giStringState.ToString())
+        ProcessNamedPipeGIStringData(giStringId, giStringState)
+    End Sub
+
+    Private Sub ProcessNamedPipeGIStringData(ByVal giStringId As Integer, ByVal giStringState As Integer)
+        ' Add to gistrings array for processing
+        If giStringId >= 0 AndAlso giStringId < gistrings.Length Then
+            gistrings(giStringId) = giStringState
+        End If
+    End Sub
+
+    Private Sub ProcessNamedPipeLED(ByVal key As String, ByVal value As String)
+        Dim ledDigit As Integer = CInt(key.Substring(1))
+        Dim ledValue As Integer = CInt(value)
+        WriteNamedPipeLog("LED: Digit=" & ledDigit.ToString() & ", Value=" & ledValue.ToString())
+        ProcessNamedPipeLEDData(ledDigit, ledValue)
+    End Sub
+
+    Private Sub ProcessNamedPipeLEDData(ByVal digit As Integer, ByVal value As Integer)
+        ' Add to leds array for processing
+        If digit >= 0 AndAlso digit < leds.Length Then
+            leds(digit) = value
+        End If
+    End Sub
+
+    Private Sub ProcessNamedPipeMech(ByVal key As String, ByVal value As String)
+        Dim mechId As Integer = CInt(key.Substring(1))
+        Dim mechValue As Integer = CInt(value)
+        WriteNamedPipeLog("MECH: ID=" & mechId.ToString() & ", Value=" & mechValue.ToString())
+        ProcessNamedPipeMechData(mechId, mechValue)
+    End Sub
+
+    Private Sub ProcessNamedPipeMechData(ByVal mechId As Integer, ByVal mechValue As Integer)
+        ' Add to mechs array for processing
+        If mechId >= 1 AndAlso mechId <= 5 Then
+            mechs(mechId) = mechValue
+        End If
+    End Sub
+
+    Private Sub CloseNamedPipe()
+        Try
+            WriteNamedPipeLog("[CloseNamedPipe] Closing named pipe")
+
+            If pipeReader IsNot Nothing Then
+                pipeReader.Close()
+                pipeReader.Dispose()
+                pipeReader = Nothing
+            End If
+
+            If pipeServer IsNot Nothing Then
+                pipeServer.Close()
+                pipeServer.Dispose()
+                pipeServer = Nothing
+            End If
+
+            If namedPipeLogWriter IsNot Nothing Then
+                namedPipeLogWriter.Close()
+                namedPipeLogWriter.Dispose()
+                namedPipeLogWriter = Nothing
+            End If
+
+            isPipeConnected = False
+        Catch ex As Exception
+            ' Silent fail
+        End Try
+    End Sub
+
+#End Region
+#End If
 
 End Class

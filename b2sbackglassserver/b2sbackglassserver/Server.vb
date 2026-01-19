@@ -3,6 +3,7 @@ Imports System.Text
 Imports System.Runtime.InteropServices
 Imports Microsoft.Win32
 Imports System.Drawing
+Imports System.IO.Pipes
 
 <ProgId("B2S.Server"), ComClass(Server.ClassID, Server.InterfaceID, Server.EventsID)>
 Public Class Server
@@ -51,10 +52,14 @@ Public Class Server
 
     ' IDisposable
     Protected Overridable Sub Dispose(disposing As Boolean)
+
         If Not Me.disposedValue Then
 
             If disposing Then
                 ' TODO: dispose managed state (managed objects).
+
+                'send a message over the named pipe to signal a shutdown
+                SendShutdownAndDisconnectNamedPipe()
             End If
 
             ' TODO: free unmanaged resources (unmanaged objects) and override Finalize() below.
@@ -402,6 +407,8 @@ Public Class Server
         tableHandle = CInt(handle)
         Startup()
 
+
+
         ' maybe initialize plugin stuff
         If B2SSettings.ArePluginsOn Then
             B2SSettings.PluginHost.PluginInit(System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), String.Format("{0}.vpt", B2SData.TableFileName)), If(Not String.IsNullOrEmpty(B2SName), B2SName, GameName))
@@ -427,6 +434,9 @@ Public Class Server
         If B2SData.TestMode AndAlso B2SData.IsBackglassRunning AndAlso formBackglass IsNot Nothing Then
             formBackglass.TopMost = True
         End If
+
+        ' Initialize named pipe writer for EXE mode
+        InitializeNamedPipeWriter()
 
     End Sub
 
@@ -718,9 +728,14 @@ Public Class Server
     Private sb As StringBuilder = New StringBuilder
     Private sb2Log As StringBuilder = New StringBuilder
 
+    Private B2SLamps As StringBuilder = New StringBuilder
+    Private B2SGIStrings As StringBuilder = New StringBuilder
+    Private B2SSolenoids As StringBuilder = New StringBuilder
+
     Private Sub CheckLamps(ByVal lamps As Object(,))
 
         statelogChangedLamps.IsLogOn = B2SSettings.IsLampsStateLogOn
+        Dim B2SLamps_new As StringBuilder = New StringBuilder(B2SLamps.ToString()) ' track new values to see if changed
 
         If lamps IsNot Nothing AndAlso IsArray(lamps) Then
 
@@ -802,9 +817,15 @@ Public Class Server
             If collectLampsData.ShowData() Then
 
                 If B2SData.IsBackglassStartedAsEXE Then
+                    If B2SLamps.Length = 0 Then
+                        B2SLamps.Append(New String("0", 401))
+                        B2SLamps_new.Append(New String("0", 401))
+                    End If
+
                     ' get current registry infos
-                    sb.Length = 0
-                    sb.Append(Registry.CurrentUser.OpenSubKey("Software\B2S").GetValue("B2SLamps", New String("0", 401)).ToString())
+                    'sb.Length = 0
+                    'gets the name, or default value. 
+                    '  sb.Append(Registry.CurrentUser.OpenSubKey("Software\B2S").GetValue("B2SLamps", New String("0", 401)).ToString())
                 End If
 
                 For Each lampdata As KeyValuePair(Of Integer, B2SCollectData.CollectData) In collectLampsData
@@ -822,11 +843,12 @@ Public Class Server
                     If B2SData.IsBackglassStartedAsEXE Then
 
                         ' enter new lamp state
-                        sb.Remove(lampid, 1)
+                        B2SLamps_new.Remove(lampid, 1)
+
                         If lampstate Then
-                            sb.Insert(lampid, "1")
+                            B2SLamps_new.Insert(lampid, "1")
                         Else
-                            sb.Insert(lampid, "0")
+                            B2SLamps_new.Insert(lampid, "0")
                         End If
 
                     Else
@@ -925,7 +947,22 @@ Public Class Server
 
                 If B2SData.IsBackglassStartedAsEXE Then
                     ' write into registry
-                    Registry.CurrentUser.OpenSubKey("Software\B2S", True).SetValue("B2SLamps", sb.ToString())
+                    ' Registry.CurrentUser.OpenSubKey("Software\B2S", True).SetValue("B2SLamps", B2SLamps.ToString())
+
+                    'only write to named pipe if the data has changed
+                    If Not B2SLamps_new.ToString().Equals(B2SLamps.ToString(), StringComparison.OrdinalIgnoreCase) Then
+                        B2SLamps = B2SLamps_new
+                        WriteToNamedPipe("B2SLamps|" & B2SLamps.ToString())
+                    End If
+
+                    'WriteToNamedPipe("B2SLamps=" & B2SLamps_new.ToString())
+                    'B2SLamps = B2SLamps_new
+                    '' Also write to named pipe
+                    'For Each lampdata As KeyValuePair(Of Integer, B2SCollectData.CollectData) In collectLampsData
+                    '    Dim lampid As Integer = lampdata.Key
+                    '    Dim lampstate As Boolean = lampdata.Value.State > lampThreshold
+                    '    WriteToNamedPipe("L," & lampid.ToString() & "," & If(lampstate, "1", "0"))
+                    'Next
                 End If
 
                 ' reset all current data
@@ -937,6 +974,7 @@ Public Class Server
 
     End Sub
     Private Sub CheckSolenoids(ByVal solenoids As Object(,))
+        Dim B2SSolenoids_new As StringBuilder = New StringBuilder(B2SSolenoids.ToString()) ' track new values to see if changed
 
         statelogChangedSolenoids.IsLogOn = B2SSettings.IsSolenoidsStateLogOn
 
@@ -1021,8 +1059,14 @@ Public Class Server
 
                 If B2SData.IsBackglassStartedAsEXE Then
                     ' get current registry infos
-                    sb.Length = 0
-                    sb.Append(Registry.CurrentUser.OpenSubKey("Software\B2S").GetValue("B2SSolenoids", New String("0", 251)).ToString())
+                    ' sb.Length = 0
+                    ' sb.Append(Registry.CurrentUser.OpenSubKey("Software\B2S").GetValue("B2SSolenoids", New String("0", 251)).ToString())
+
+                    If B2SSolenoids.Length = 0 Then
+                        B2SSolenoids.Append(New String("0", 251))
+                        B2SSolenoids_new.Append(New String("0", 251))
+                    End If
+
                 End If
 
                 For Each solenoiddata As KeyValuePair(Of Integer, B2SCollectData.CollectData) In collectSolenoidsData
@@ -1040,11 +1084,11 @@ Public Class Server
                     If B2SData.IsBackglassStartedAsEXE Then
 
                         ' enter new solenoid state  
-                        sb.Remove(solenoidid, 1)
+                        B2SSolenoids_new.Remove(solenoidid, 1)
                         If (solenoidstate <> 0) Then
-                            sb.Insert(solenoidid, "1")
+                            B2SSolenoids_new.Insert(solenoidid, "1")
                         Else
-                            sb.Insert(solenoidid, "0")
+                            B2SSolenoids_new.Insert(solenoidid, "0")
                         End If
 
                     Else
@@ -1143,7 +1187,21 @@ Public Class Server
 
                 If B2SData.IsBackglassStartedAsEXE Then
                     ' write into registry
-                    Registry.CurrentUser.OpenSubKey("Software\B2S", True).SetValue("B2SSolenoids", sb.ToString())
+                    'Registry.CurrentUser.OpenSubKey("Software\B2S", True).SetValue("B2SSolenoids", sb.ToString())
+
+                    'only write to named pipe if the data has changed
+                    If Not B2SSolenoids_new.ToString().Equals(B2SSolenoids.ToString(), StringComparison.OrdinalIgnoreCase) Then
+                        B2SSolenoids = B2SSolenoids_new
+                        WriteToNamedPipe("B2SSolenoids|" & B2SSolenoids.ToString())
+                    End If
+
+
+                    '' Also write to named pipe
+                    'For Each solenoiddata As KeyValuePair(Of Integer, B2SCollectData.CollectData) In collectSolenoidsData
+                    '    Dim solenoidid As Integer = solenoiddata.Key
+                    '    Dim solenoidstate As Integer = solenoiddata.Value.State
+                    '    WriteToNamedPipe("S," & solenoidid.ToString() & "," & If(solenoidstate <> 0, "1", "0"))
+                    'Next
                 End If
 
                 ' reset all current data
@@ -1155,6 +1213,7 @@ Public Class Server
 
     End Sub
     Private Sub CheckGIStrings(ByVal gistrings As Object(,))
+        Dim B2SGIStrings_new As StringBuilder = New StringBuilder(B2SGIStrings.ToString()) ' track new values to see if changed
 
         statelogChangedGIStrings.IsLogOn = B2SSettings.IsGIStringsStateLogOn
 
@@ -1239,8 +1298,14 @@ Public Class Server
 
                 If B2SData.IsBackglassStartedAsEXE Then
                     ' get current registry infos
-                    sb.Length = 0
-                    sb.Append(Registry.CurrentUser.OpenSubKey("Software\B2S").GetValue("B2SGIStrings", New String("0", 251)).ToString())
+                    'sb.Length = 0
+                    'sb.Append(Registry.CurrentUser.OpenSubKey("Software\B2S").GetValue("B2SGIStrings", New String("0", 251)).ToString())
+
+                    If B2SGIStrings.Length = 0 Then
+                        B2SGIStrings.Append(New String("0", 401))
+                        B2SGIStrings_new.Append(New String("0", 401))
+                    End If
+
                 End If
 
                 For Each giStringData As KeyValuePair(Of Integer, B2SCollectData.CollectData) In collectGIStringsData
@@ -1258,8 +1323,12 @@ Public Class Server
                     If B2SData.IsBackglassStartedAsEXE Then
 
                         ' enter new gistring state
-                        sb.Remove(giStringId, 1)
-                        sb.Insert(giStringId, If(giStringBool, "5", "0"))
+                        B2SGIStrings_new.Remove(giStringId, 1)
+                        B2SGIStrings_new.Insert(giStringId, If(giStringBool, "5", "0"))
+
+                        '' enter new gistring state
+                        'sb.Remove(giStringId, 1)
+                        'sb.Insert(giStringId, If(giStringBool, "5", "0"))
 
                     Else
 
@@ -1357,7 +1426,21 @@ Public Class Server
 
                 If B2SData.IsBackglassStartedAsEXE Then
                     ' write into registry
-                    Registry.CurrentUser.OpenSubKey("Software\B2S", True).SetValue("B2SGIStrings", sb.ToString())
+                    'Registry.CurrentUser.OpenSubKey("Software\B2S", True).SetValue("B2SGIStrings", sb.ToString())
+                    'WriteToNamedPipe("B2SGIStrings=" & sb.ToString())
+
+                    'write only if data has changed
+                    If Not B2SGIStrings_new.ToString().Equals(B2SGIStrings.ToString(), StringComparison.OrdinalIgnoreCase) Then
+                        B2SGIStrings = B2SGIStrings_new
+                        WriteToNamedPipe("B2SGIStrings|" & B2SGIStrings.ToString())
+                    End If
+
+                    '' Also write to named pipe
+                    'For Each giStringData As KeyValuePair(Of Integer, B2SCollectData.CollectData) In collectGIStringsData
+                    '    Dim giStringId As Integer = giStringData.Key
+                    '    Dim giStringBool As Boolean = giStringData.Value.State > giStringThreshold
+                    '    WriteToNamedPipe("G," & giStringId.ToString() & "," & If(giStringBool, "5", "0"))
+                    'Next
                 End If
 
                 ' reset all current data
@@ -1405,9 +1488,9 @@ Public Class Server
             Dim useReels As Boolean = (B2SData.UseReels)
 
             ' maybe open regkey for writing into registry
-            Dim regkey As RegistryKey = Nothing
+            'Dim regkey As RegistryKey = Nothing
             If B2SData.IsBackglassStartedAsEXE Then
-                regkey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+                'regkey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
             End If
 
             For Each leddata As KeyValuePair(Of Integer, B2SCollectData.CollectData) In collectLEDsData
@@ -1424,7 +1507,9 @@ Public Class Server
                 If B2SData.IsBackglassStartedAsEXE Then
 
                     ' write new LED state into registry
-                    regkey.SetValue("B2SLED" & (digit + 1).ToString(), value)
+                    'regkey.SetValue("B2SLED" & (digit + 1).ToString(), value)
+                    ' Also write to named pipe
+                    WriteToNamedPipe($"B2SLED|{digit + 1}={value}")
 
                 Else
 
@@ -1465,7 +1550,7 @@ Public Class Server
 
             ' maybe close opened regkey
             If B2SData.IsBackglassStartedAsEXE Then
-                regkey.Close()
+                'regkey.Close()
             End If
 
             ' reset all current data
@@ -1648,9 +1733,13 @@ Public Class Server
             If B2SData.IsBackglassStartedAsEXE Then
 
                 If mechid >= 1 AndAlso mechid <= 5 Then
-                    Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
-                        regkey.SetValue("B2SMechs" & mechid.ToString(), mechvalue)
-                    End Using
+                    'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+                    '    regkey.SetValue("B2SMechs" & mechid.ToString(), mechvalue)
+                    'End Using
+
+                    WriteToNamedPipe($"B2SMechs|{mechid.ToString()}={mechvalue}")
+                    ' WriteToNamedPipe("M," & mechid.ToString() & "," & mechvalue.ToString())
+
                 End If
 
             Else
@@ -1986,25 +2075,56 @@ Public Class Server
 
 #Region "private non VPinMAME support"
 
+    Private B2SSetDataSB As StringBuilder = New StringBuilder()
+    Private B2SIlluGroupsByName As StringBuilder = New StringBuilder()
+    Private B2SPositions As StringBuilder = New StringBuilder()
+    Private B2SAnimations As StringBuilder = New StringBuilder()
+    Private B2SSounds As String = String.Empty
+
     Private Sub MyB2SSetData(ByVal id As Integer, ByVal value As Integer)
+
+        Dim B2SSetDataSB_new As StringBuilder = New StringBuilder(B2SSetDataSB.ToString()) ' track new values to see if changed
 
         If B2SData.IsBackglassRunning Then
 
             If B2SData.IsBackglassStartedAsEXE Then
 
                 If id <= 250 Then
-                    Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
-                        ' get current registry infos
-                        sb.Length = 0
-                        sb.Append(regkey.GetValue("B2SSetData", New String(Chr(0), 251)).ToString())
+                    'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+                    '    ' get current registry infos
+                    '    sb.Length = 0
+                    '    sb.Append(regkey.GetValue("B2SSetData", New String(Chr(0), 251)).ToString())
 
-                        ' enter new lamp state
-                        sb.Remove(id, 1)
-                        sb.Insert(id, Chr(value))
+                    '    ' enter new lamp state
+                    '    sb.Remove(id, 1)
+                    '    sb.Insert(id, Chr(value))
 
-                        ' write into registry
-                        regkey.SetValue("B2SSetData", sb.ToString())
-                    End Using
+                    '    ' write into registry
+                    '    regkey.SetValue("B2SSetData", sb.ToString())
+
+                    'End Using
+
+                    'debug to understand data modified/issues
+                    'WriteNamedPipeLog($"B2SSetData called id:{id} value:{value}")
+                    'example, not sure why this is happening:
+                    '2026-01-17 23:02:15.751 - [DLL] B2SSetData called id:202 value:1
+                    '2026-01-17 23:02:15.751 - [DLL] B2SSetData called id:202 value:0
+
+                    If B2SSetDataSB.Length = 0 Then
+                        B2SSetDataSB.Append(New String(Chr(0), 251))
+                        B2SSetDataSB_new.Append(New String(Chr(0), 251))
+                    End If
+
+                    ' enter new lamp state
+                    B2SSetDataSB_new.Remove(id, 1)
+                    B2SSetDataSB_new.Insert(id, Chr(value))
+
+                    'only write to named pipe if the data has changed
+                    If Not B2SSetDataSB_new.ToString().Equals(B2SSetDataSB.ToString(), StringComparison.OrdinalIgnoreCase) Then
+                        B2SSetDataSB = B2SSetDataSB_new
+                        WriteToNamedPipe("B2SSetData|" & B2SSetDataSB.ToString())
+                    End If
+
                 End If
 
             Else
@@ -2096,15 +2216,36 @@ Public Class Server
     End Sub
     Private Sub MyB2SSetData(ByVal groupname As String, ByVal value As Integer)
 
+        Dim B2SIlluGroupsByName_new As StringBuilder = New StringBuilder(B2SIlluGroupsByName.ToString())
+
         If Not B2SData.IsBackglassRunning Then Return
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
-                ' add current groupname to the already existing string
-                Dim illugroups As String = regkey.GetValue("B2SIlluGroupsByName", String.Empty)
-                regkey.SetValue("B2SIlluGroupsByName", illugroups & Chr(1) & groupname & "=" & value.ToString())
-            End Using
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            '    ' add current groupname to the already existing string
+            '    Dim illugroups As String = regkey.GetValue("B2SIlluGroupsByName", String.Empty)
+            '    regkey.SetValue("B2SIlluGroupsByName", illugroups & Chr(1) & groupname & "=" & value.ToString())
+            'End Using
+
+
+            If B2SIlluGroupsByName.Length = 0 Then
+                B2SIlluGroupsByName.Append(String.Empty)
+                B2SIlluGroupsByName_new.Append(String.Empty)
+            End If
+
+            'these get split by chr(1) into groupname=value parts
+            B2SIlluGroupsByName.Append(Chr(1) & groupname & "=" & value.ToString())
+
+            WriteToNamedPipe($"B2SIlluGroupsByName|{B2SIlluGroupsByName.ToString()}")
+
+            'CLEAR EVERYHING?? 
+            'TODO: clean up
+            'I think this can be simplified. for registry version, data needs to be added to value
+            'which is then cleared after being read by the forms app.
+            'for named pipe version, data can just be sent and processed 
+            B2SIlluGroupsByName.Clear()
+            B2SIlluGroupsByName_new.Clear()
 
         Else
 
@@ -2132,10 +2273,27 @@ Public Class Server
         If B2SData.IsBackglassRunning Then
 
             If B2SData.IsBackglassStartedAsEXE Then
-                Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
-                    Dim illugroups As String = regkey.GetValue("B2SPositions", String.Empty)
-                    regkey.SetValue("B2SPositions", illugroups & Chr(1) & id.ToString() & "," & xpos.ToString() & "," & ypos.ToString())
-                End Using
+                'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+                '    Dim illugroups As String = regkey.GetValue("B2SPositions", String.Empty)
+                '    regkey.SetValue("B2SPositions", illugroups & Chr(1) & id.ToString() & "," & xpos.ToString() & "," & ypos.ToString())
+                'End Using
+
+                If B2SPositions.Length = 0 Then
+                    B2SPositions.Append(String.Empty)
+                    B2SPositions.Append(String.Empty)
+                End If
+
+                'these get split by chr(1) into id,xpos,ypos parts
+                B2SPositions.Append(Chr(1) & id.ToString() & "," & xpos.ToString() & "," & ypos.ToString())
+
+                WriteToNamedPipe($"B2SPositions|{B2SPositions.ToString()}")
+
+                'CLEAR EVERYHING??
+                'TODO: this can be simplified for named pipes 
+                'for registry version, data needs to be added to value until processed
+                'for named pipe version, data can just be sent as it is queued
+                B2SPositions.Clear()
+
             ElseIf B2SData.UsedRomLampIDs.ContainsKey(id) Then
                 Dim rescaleBackglass As SizeF
                 Me.formBackglass.GetScaleFactor(rescaleBackglass)
@@ -2164,9 +2322,12 @@ Public Class Server
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
-                regkey.SetValue("B2SLED" & digit.ToString(), value)
-            End Using
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            '    regkey.SetValue("B2SLED" & digit.ToString(), value)
+            'End Using
+
+            WriteToNamedPipe($"B2SLED|{digit}={value}")
+
 
             'ElseIf useLEDs Then
         ElseIf (B2SSettings.UsedLEDType = B2SSettings.eLEDTypes.Rendered AndAlso B2SData.LEDs.ContainsKey("LEDBox" & digit.ToString())) Then
@@ -2273,9 +2434,11 @@ Public Class Server
                 If B2SData.IsBackglassStartedAsEXE Then
 
                     ' set data to registry matching the current score digit type
-                    Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
-                        regkey.SetValue("B2SLED" & digit.ToString(), If(Not AnimateReelChange, CInt(value), MyB2SConvertValueToLED(value, ledtype)))
-                    End Using
+                    'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+                    '    regkey.SetValue("B2SLED" & digit.ToString(), If(Not AnimateReelChange, CInt(value), MyB2SConvertValueToLED(value, ledtype)))
+                    'End Using
+
+                    WriteToNamedPipe($"B2SLED|{digit}={If(Not AnimateReelChange, CInt(value), MyB2SConvertValueToLED(value, ledtype))}")
 
                 ElseIf useLEDs Then
 
@@ -2509,11 +2672,11 @@ Public Class Server
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
 
-                ' get thru all animations of the registry and update or add the new started animation
-                Dim found As Boolean = False
-                Dim animationinfo As String = regkey.GetValue("B2SAnimations", String.Empty).ToString()
+            ' get thru all animations of the registry and update or add the new started animation
+            Dim found As Boolean = False
+            Dim animationinfo As String = B2SAnimations.ToString() ' regkey.GetValue("B2SAnimations", String.Empty).ToString()
                 Dim currentanimations As String() = animationinfo.Split(Chr(1))
                 For i As Integer = 0 To currentanimations.Length - 1
                     If currentanimations(i).StartsWith(animationname & "=") Then
@@ -2526,9 +2689,11 @@ Public Class Server
                     ReDim Preserve currentanimations(currentanimations.Length)
                     currentanimations(currentanimations.Length - 1) = animationname & "=" & If(playreverse, "2", "1")
                 End If
-                regkey.SetValue("B2SAnimations", Join(currentanimations, Chr(1)))
+            'regkey.SetValue("B2SAnimations", Join(currentanimations, Chr(1)))
 
-            End Using
+            B2SAnimations.Clear().Append(Join(currentanimations, Chr(1)))
+            'End Using
+            WriteToNamedPipe($"B2SAnimations|{B2SAnimations.ToString()}")
 
         Else
 
@@ -2538,33 +2703,37 @@ Public Class Server
 
     End Sub
     Private Sub MyB2SStopAnimation(ByVal animationname As String)
+        'not used? references to this sub not called?
 
         If Not B2SData.IsBackglassRunning Then Return
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
 
-                ' get thru all animations of the registry and update or add the stopped animation
-                Dim found As Boolean = False
-                Dim animationinfo As String = regkey.GetValue("B2SAnimations", String.Empty).ToString()
-                If Not String.IsNullOrEmpty(animationinfo) Then
-                    Dim currentanimations As String() = animationinfo.Split(Chr(1))
-                    For i As Integer = 0 To currentanimations.Length - 1
-                        If currentanimations(i).StartsWith(animationname & "=") Then
-                            found = True
-                            currentanimations(i) = animationname & "=0"
-                            Exit For
-                        End If
-                    Next
-                    If Not found Then
-                        ReDim Preserve currentanimations(currentanimations.Length)
-                        currentanimations(currentanimations.Length - 1) = animationname & "=0"
+            ' get thru all animations of the registry and update or add the stopped animation
+            Dim found As Boolean = False
+            Dim animationinfo As String = B2SAnimations.ToString() ' regkey.GetValue("B2SAnimations", String.Empty).ToString()
+            If Not String.IsNullOrEmpty(animationinfo) Then
+                Dim currentanimations As String() = animationinfo.Split(Chr(1))
+                For i As Integer = 0 To currentanimations.Length - 1
+                    If currentanimations(i).StartsWith(animationname & "=") Then
+                        found = True
+                        currentanimations(i) = animationname & "=0"
+                        Exit For
                     End If
-                    regkey.SetValue("B2SAnimations", Join(currentanimations, Chr(1)))
+                Next
+                If Not found Then
+                    ReDim Preserve currentanimations(currentanimations.Length)
+                    currentanimations(currentanimations.Length - 1) = animationname & "=0"
                 End If
+                'regkey.SetValue("B2SAnimations", Join(currentanimations, Chr(1)))
+                B2SAnimations.Clear().Append(Join(currentanimations, Chr(1)))
+                'End Using
+                WriteToNamedPipe($"B2SAnimations|{B2SAnimations.ToString()}")
+            End If
 
-            End Using
+            'End Using
 
         Else
 
@@ -2579,22 +2748,24 @@ Public Class Server
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
 
-                ' get thru all animations of the registry and update all animation to stop them
-                Dim found As Boolean = False
-                Dim animationinfo As String = regkey.GetValue("B2SAnimations", String.Empty).ToString()
-                If Not String.IsNullOrEmpty(animationinfo) Then
-                    Dim currentanimations As String() = animationinfo.Split(Chr(1))
-                    For i As Integer = 0 To currentanimations.Length - 1
-                        If Not String.IsNullOrEmpty(currentanimations(i)) AndAlso currentanimations(i).Contains("=") Then
-                            currentanimations(i) = currentanimations(i).Substring(0, currentanimations(i).Length - 1) & "0"
-                        End If
-                    Next
-                    regkey.SetValue("B2SAnimations", Join(currentanimations, Chr(1)))
-                End If
+            ' get thru all animations of the registry and update all animation to stop them
+            Dim found As Boolean = False
+            Dim animationinfo As String = B2SAnimations.ToString() 'regkey.GetValue("B2SAnimations", String.Empty).ToString()
+            If Not String.IsNullOrEmpty(animationinfo) Then
+                Dim currentanimations As String() = animationinfo.Split(Chr(1))
+                For i As Integer = 0 To currentanimations.Length - 1
+                    If Not String.IsNullOrEmpty(currentanimations(i)) AndAlso currentanimations(i).Contains("=") Then
+                        currentanimations(i) = currentanimations(i).Substring(0, currentanimations(i).Length - 1) & "0"
+                    End If
+                Next
+                'regkey.SetValue("B2SAnimations", Join(currentanimations, Chr(1)))
+                B2SAnimations.Clear().Append(Join(currentanimations, Chr(1)))
+                WriteToNamedPipe($"B2SAnimations|{B2SAnimations.ToString()}")
+            End If
 
-            End Using
+            ' End Using
 
         Else
 
@@ -2627,12 +2798,14 @@ Public Class Server
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
 
-                ' right now just one rotation per backglass so just set a "1" or "0"
-                regkey.SetValue("B2SRotations", "1")
+            '    ' right now just one rotation per backglass so just set a "1" or "0"
+            '    regkey.SetValue("B2SRotations", "1")
 
-            End Using
+            'End Using
+
+            WriteToNamedPipe("B2SRotations|1")
 
         Else
 
@@ -2647,12 +2820,14 @@ Public Class Server
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
 
-                ' right now just one rotation per backglass so just set a "1" or "0"
-                regkey.SetValue("B2SRotations", "0")
+            '    ' right now just one rotation per backglass so just set a "1" or "0"
+            '    regkey.SetValue("B2SRotations", "0")
 
-            End Using
+            'End Using
+
+            WriteToNamedPipe("B2SRotations|0")
 
         Else
 
@@ -2668,9 +2843,11 @@ Public Class Server
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
-                regkey.SetValue("B2SHideScoreDisplays", If(Not visible, 1, 0))
-            End Using
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            '    regkey.SetValue("B2SHideScoreDisplays", If(Not visible, 1, 0))
+            'End Using
+
+            WriteToNamedPipe("B2SHideScoreDisplays|" & If(Not visible, 1, 0).ToString())
 
         Else
 
@@ -2690,26 +2867,27 @@ Public Class Server
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
 
-                ' get thru all sounds of the registry and update or add the new started sound
-                Dim found As Boolean = False
-                Dim soundinfo As String = regkey.GetValue("B2SSounds", String.Empty).ToString()
-                Dim currentsounds As String() = soundinfo.Split(Chr(1))
-                For i As Integer = 0 To currentsounds.Length - 1
-                    If currentsounds(i).StartsWith(soundname & "=") Then
-                        found = True
-                        currentsounds(i) = soundname & "=1"
-                        Exit For
-                    End If
-                Next
-                If Not found Then
-                    ReDim Preserve currentsounds(currentsounds.Length)
-                    currentsounds(currentsounds.Length - 1) = soundname & "=1"
+            ' get thru all sounds of the registry and update or add the new started sound
+            Dim found As Boolean = False
+            Dim soundinfo As String = B2SSounds 'regkey.GetValue("B2SSounds", String.Empty).ToString()
+            Dim currentsounds As String() = soundinfo.Split(Chr(1))
+            For i As Integer = 0 To currentsounds.Length - 1
+                If currentsounds(i).StartsWith(soundname & "=") Then
+                    found = True
+                    currentsounds(i) = soundname & "=1"
+                    Exit For
                 End If
-                regkey.SetValue("B2SSounds", Join(currentsounds, Chr(1)))
-
-            End Using
+            Next
+            If Not found Then
+                ReDim Preserve currentsounds(currentsounds.Length)
+                currentsounds(currentsounds.Length - 1) = soundname & "=1"
+            End If
+            'regkey.SetValue("B2SSounds", Join(currentsounds, Chr(1)))
+            B2SSounds = Join(currentsounds, Chr(1))
+            WriteToNamedPipe("B2SSounds|" & B2SSounds)
+            ' End Using
 
         Else
 
@@ -2724,11 +2902,11 @@ Public Class Server
 
         If B2SData.IsBackglassStartedAsEXE Then
 
-            Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
+            'Using regkey As RegistryKey = Registry.CurrentUser.OpenSubKey("Software\B2S", True)
 
-                ' get thru all sounds of the registry and update or add the stopped sound
-                Dim found As Boolean = False
-                Dim soundinfo As String = regkey.GetValue("B2SSounds", String.Empty).ToString()
+            ' get thru all sounds of the registry and update or add the stopped sound
+            Dim found As Boolean = False
+                Dim soundinfo As String = B2SSounds ' regkey.GetValue("B2SSounds", String.Empty).ToString()
                 If Not String.IsNullOrEmpty(soundinfo) Then
                     Dim currentsounds As String() = soundinfo.Split(Chr(1))
                     For i As Integer = 0 To currentsounds.Length - 1
@@ -2742,10 +2920,12 @@ Public Class Server
                         ReDim Preserve currentsounds(currentsounds.Length)
                         currentsounds(currentsounds.Length - 1) = soundname & "=0"
                     End If
-                    regkey.SetValue("B2SSounds", Join(currentsounds, Chr(1)))
+                    'regkey.SetValue("B2SSounds", Join(currentsounds, Chr(1)))
+                    B2SSounds = Join(currentsounds, Chr(1))
+                    WriteToNamedPipe("B2SSounds|" & B2SSounds)
                 End If
 
-            End Using
+            'End Using
 
         Else
 
@@ -2760,7 +2940,7 @@ Public Class Server
 #End Region
 
 
-#Region "private stuff"
+#Region "Private stuff"
 
     Private Sub Startup()
 
@@ -2844,7 +3024,7 @@ Public Class Server
 
                     ' maybe throw exception because the exe can not be found
                     If Not exeFound Then
-                        Throw New Exception("Can not find '" & exeName & "' in folder '" & IO.Directory.GetCurrentDirectory & "' and in folder '" & My.Application.Info.DirectoryPath & "'")
+                        Throw New Exception("Can Not find '" & exeName & "' in folder '" & IO.Directory.GetCurrentDirectory & "' and in folder '" & My.Application.Info.DirectoryPath & "'")
                     End If
 
                     ' start new process
@@ -2980,6 +3160,7 @@ Public Class Server
             B2SData.IsBackglassVisible = False
 
             If B2SData.IsBackglassStartedAsEXE Then
+                SendShutdownAndDisconnectNamedPipe()
 
                 If process IsNot Nothing Then
                     Try
@@ -3035,6 +3216,206 @@ Public Class Server
 
 #End Region
 
+#Region "Named Pipe Client"
 
+    Private pipeClient As IO.Pipes.NamedPipeClientStream = Nothing
+    Private pipeStreamWriter As IO.StreamWriter = Nothing
+    Private isPipeClientConnected As Boolean = False
+    Private pipeWriteQueue As New System.Collections.Concurrent.ConcurrentQueue(Of String)
+    Private pipeWriterThread As Threading.Thread = Nothing
+
+    Private namedPipeLogWriter As IO.StreamWriter = Nothing
+    Private namedPipeLogEnabled As Boolean = True
+    Private namedPipeLogName As String = "b2s-client-namedpipelog.txt"
+    Private runPipeThread As Boolean = True
+
+    Private Sub WriteNamedPipeLog(ByVal message As String)
+        If Not namedPipeLogEnabled Then Return
+        Try
+            If namedPipeLogWriter Is Nothing Then
+                ' Ensure directory exists
+                Dim logDir As String = System.IO.Path.GetDirectoryName(
+                    System.Reflection.Assembly.GetExecutingAssembly().Location)
+                If Not IO.Directory.Exists(logDir) Then
+                    IO.Directory.CreateDirectory(logDir)
+                End If
+
+                ' Open or create log file (truncate mode)
+                namedPipeLogWriter = New IO.StreamWriter(
+                    System.IO.Path.Combine(logDir, namedPipeLogName), False)
+                namedPipeLogWriter.AutoFlush = True
+            End If
+
+            ' Write timestamped message
+            namedPipeLogWriter.WriteLine(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") & " - [DLL] " & message)
+
+        Catch ex As Exception
+            ' Silent fail - don't crash the server
+        End Try
+    End Sub
+
+    Private Sub SendShutdownAndDisconnectNamedPipe()
+        Try
+            WriteNamedPipeLog("Sending shutdown message to named pipe server...")
+            If isPipeClientConnected AndAlso pipeStreamWriter IsNot Nothing Then
+                pipeStreamWriter.WriteLine("B2SShutdown|1")
+                WriteNamedPipeLog("Shutdown message sent")
+                System.Threading.Thread.Sleep(200)
+                runPipeThread = False
+            Else
+                WriteNamedPipeLog("Cannot send shutdown message - not connected")
+            End If
+        Catch ex As Exception
+            errorlog.WriteLogEntry(DateTime.Now & ": Error sending shutdown message: " & ex.Message)
+            WriteNamedPipeLog("Error sending shutdown message: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub InitializeNamedPipeWriter()
+        Try
+            WriteNamedPipeLog("Initializing named pipe client...")
+
+            If B2SData.IsBackglassStartedAsEXE AndAlso Not isPipeClientConnected Then
+                ' Start a background thread to handle pipe client
+                pipeWriterThread = New Threading.Thread(AddressOf NamedPipeClientThread)
+                pipeWriterThread.IsBackground = True
+                pipeWriterThread.Start()
+                errorlog.WriteLogEntry(DateTime.Now & ": Named pipe client initialized")
+                WriteNamedPipeLog("Named pipe client thread started")
+            End If
+        Catch ex As Exception
+            errorlog.WriteLogEntry(DateTime.Now & ": Named pipe client initialization error: " & ex.Message)
+            WriteNamedPipeLog("Initialization error: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub NamedPipeClientThread()
+
+        If Not B2SData.IsBackglassStartedAsEXE Then Return
+
+        While runPipeThread
+            Try
+                ' Create named pipe client
+                pipeClient = New IO.Pipes.NamedPipeClientStream(
+                    ".",
+                    "b2snamedpipe",
+                    IO.Pipes.PipeDirection.InOut,
+                    IO.Pipes.PipeOptions.Asynchronous)
+
+                errorlog.WriteLogEntry(DateTime.Now & ": Attempting to connect to named pipe server...")
+                WriteNamedPipeLog("Attempting to connect to named pipe server...")
+
+                ' Try to connect with x ms timeout
+                pipeClient.Connect(2500)
+
+                isPipeClientConnected = True
+                errorlog.WriteLogEntry(DateTime.Now & ": Named pipe client connected to server")
+                WriteNamedPipeLog("Successfully connected to named pipe server")
+
+                Using writer As New IO.StreamWriter(pipeClient)
+                    writer.AutoFlush = True
+                    pipeStreamWriter = writer
+
+                    ' Write queued data while connected
+                    While runPipeThread AndAlso pipeClient.IsConnected
+                        Dim data As String = Nothing
+                        If pipeWriteQueue.TryDequeue(data) Then
+                            writer.WriteLine(data)
+                            WriteNamedPipeLog("Data sent: " & data)
+                        Else
+                            ' Sleep briefly if queue is empty
+                            Threading.Thread.Sleep(1)
+                        End If
+                    End While
+
+                    pipeStreamWriter = Nothing
+                End Using
+
+                isPipeClientConnected = False
+                errorlog.WriteLogEntry(DateTime.Now & ": Named pipe client disconnected from server")
+                WriteNamedPipeLog("Disconnected from named pipe server")
+
+            Catch ex As TimeoutException
+                errorlog.WriteLogEntry(DateTime.Now & ": Named pipe client connection timeout - server not ready")
+                WriteNamedPipeLog("Connection timeout - server not ready, retrying in 1 second...")
+                Threading.Thread.Sleep(1000)
+            Catch ex As Threading.ThreadAbortException
+                ' Thread is being stopped
+                Exit While
+            Catch ex As Exception
+                errorlog.WriteLogEntry(DateTime.Now & ": Named pipe client thread error: " & ex.Message)
+                WriteNamedPipeLog("Client thread error: " & ex.Message)
+                Threading.Thread.Sleep(1000)
+            Finally
+                If pipeClient IsNot Nothing Then
+                    Try
+                        pipeClient.Dispose()
+                    Catch
+                    End Try
+                    pipeClient = Nothing
+                End If
+            End Try
+        End While
+
+        WriteNamedPipeLog("Named pipe client thread exiting")
+    End Sub
+
+    Private Sub WriteToNamedPipe(ByVal data As String)
+        Try
+            If B2SData.IsBackglassStartedAsEXE Then
+                pipeWriteQueue.Enqueue(data)
+            End If
+        Catch ex As Exception
+            errorlog.WriteLogEntry(DateTime.Now & ": Error queueing named pipe data: " & ex.Message)
+            WriteNamedPipeLog("Error queueing data: " & ex.Message)
+        End Try
+    End Sub
+
+    Private Sub CloseNamedPipeWriter()
+        Try
+            runPipeThread = False
+            isPipeClientConnected = False
+
+            If pipeWriterThread IsNot Nothing Then
+                ' Give thread time to exit gracefully
+                If Not pipeWriterThread.Join(500) Then
+                    WriteNamedPipeLog("Aborting named pipe client thread...")
+                    pipeWriterThread.Abort()
+                End If
+                pipeWriterThread = Nothing
+            End If
+
+            If pipeClient IsNot Nothing Then
+                Try
+                    pipeClient.Close()
+                    pipeClient.Dispose()
+                Catch
+                End Try
+                pipeClient = Nothing
+            End If
+
+            ' Clear any remaining queued data
+            While pipeWriteQueue.Count > 0
+                Dim dummy As String = Nothing
+                pipeWriteQueue.TryDequeue(dummy)
+            End While
+
+            errorlog.WriteLogEntry(DateTime.Now & ": Named pipe client closed")
+            WriteNamedPipeLog("Named pipe client closed")
+        Catch ex As Exception
+            errorlog.WriteLogEntry(DateTime.Now & ": Error closing named pipe client: " & ex.Message)
+            WriteNamedPipeLog("Error closing client: " & ex.Message)
+        Finally
+            If namedPipeLogWriter IsNot Nothing Then
+                Try
+                    namedPipeLogWriter.Close()
+                    namedPipeLogWriter = Nothing
+                Catch
+                End Try
+            End If
+        End Try
+    End Sub
+
+#End Region
 End Class
 

@@ -2,17 +2,17 @@
 Partial Class formBackglass
     Inherits System.Windows.Forms.Form
 
-    'Das Formular überschreibt den Löschvorgang, um die Komponentenliste zu bereinigen.
-    <System.Diagnostics.DebuggerNonUserCode()> _
-    Protected Overrides Sub Dispose(ByVal disposing As Boolean)
-        Try
-            If disposing AndAlso components IsNot Nothing Then
-                components.Dispose()
-            End If
-        Finally
-            MyBase.Dispose(disposing)
-        End Try
-    End Sub
+    ''Das Formular überschreibt den Löschvorgang, um die Komponentenliste zu bereinigen.
+    '<System.Diagnostics.DebuggerNonUserCode()>
+    'Protected Overrides Sub Dispose(ByVal disposing As Boolean)
+    '    Try
+    '        If disposing AndAlso components IsNot Nothing Then
+    '            components.Dispose()
+    '        End If
+    '    Finally
+    '        MyBase.Dispose(disposing)
+    '    End Try
+    'End Sub
 
     'Wird vom Windows Form-Designer benötigt.
     Private components As System.ComponentModel.IContainer
