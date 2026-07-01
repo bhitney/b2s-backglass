@@ -38,6 +38,17 @@ Public Class B2SData
             End If
         End Set
     End Property
+
+    ' True when the wrapped controller reports GI strings as a binary on/off
+    ' (0/1) value instead of the legacy VPinMAME 0-8 dimming range. The P-ROC
+    ' bridge (exposed as "VPROC.Controller") does this; without special casing,
+    ' its GI "1" fails the default "state > 4" test and the GI never lights.
+    ' Kept controller-scoped so no VPinMAME-driven table is affected.
+    Public Shared ReadOnly Property IsBinaryGIController() As Boolean
+        Get
+            Return String.Equals(_controllerProgID, "VPROC.Controller", StringComparison.OrdinalIgnoreCase)
+        End Get
+    End Property
     Public Shared ReadOnly Property VPinMAME() As Object
         Get
             If _vpinmame Is Nothing OrElse IsStopped Then
