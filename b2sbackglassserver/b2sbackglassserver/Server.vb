@@ -1323,7 +1323,7 @@ Public Class Server
 
                     ' get gistring data
                     Dim giStringId As Integer = giStringData.Key
-                    Dim giStringBool As Boolean = IsGIStringStateOn(giStringData.Value.State)
+                    Dim giStringBool As Boolean = giStringData.Value.State > giStringThreshold
                     Dim datatypes As Integer = giStringData.Value.Types
 
                     ' maybe write log
@@ -1444,18 +1444,6 @@ Public Class Server
         End If
 
     End Sub
-
-    ' Decide whether a GI string state counts as "on".
-    ' VPinMAME reports GI on a 0-8 dimming scale (0-255 under SolMask(2)=2 PWM
-    ' mode), so the normal test is state > giStringThreshold (4, or 64 for PWM).
-    ' Binary controllers such as the P-ROC bridge (VPROC.Controller) report GI
-    ' as 0/1, which never exceeds 4 and would leave the GI permanently off; for
-    ' those any non-zero value means on. Scoped to the controller ProgID so
-    ' behaviour for VPinMAME and every other controller stays unchanged.
-    Private Function IsGIStringStateOn(ByVal state As Integer) As Boolean
-        If B2SData.IsBinaryGIController Then Return state <> 0
-        Return state > giStringThreshold
-    End Function
     Private Sub CheckLEDs(ByVal leds As Object(,))
 
         statelogChangedLEDs.IsLogOn = B2SSettings.IsLEDsStateLogOn
