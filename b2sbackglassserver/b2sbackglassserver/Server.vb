@@ -308,7 +308,7 @@ Public Class Server
 #End Region
 
 
-#Region "Visual PinMAME COM object"
+#Region "VPin Controller COM object"
 
     Private ReadOnly Property VPinController() As Object
         Get
@@ -319,7 +319,7 @@ Public Class Server
 #End Region
 
 
-#Region "Visual PinMAME control and some general properties"
+#Region "VPin Controller control and some general properties"
 
     Public ReadOnly Property B2SServerVersion() As String
         Get
@@ -487,7 +487,7 @@ Public Class Server
 
         If B2SSettings.IsROMControlled Then
 
-            ' run VPM
+            ' run controller
             VPinController.Run(handle)
 
             ' maybe run plugins
