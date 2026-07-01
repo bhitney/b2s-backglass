@@ -21,11 +21,11 @@ Public Class B2SData
     End Enum
 #If B2S = "DLL" Then
     Private Shared _vpinController As Object = Nothing
-    Public Shared VPMHasTimeFence As Boolean = False
-    ' COM ProgID of the controller B2S wraps. Defaults to VPinController so existing
+    Public Shared ControllerHasTimeFence As Boolean = False
+    ' COM ProgID of the controller B2S wraps. Defaults to VPinMAME so existing
     ' tables are unaffected; a table may override it (e.g. "VPROC.Controller")
     ' via Server.ControllerProgID to drive an alternative controller that
-    ' implements the same VPinController COM interface (GameName, Run,
+    ' implements the same VPinMAME COM interface (GameName, Run,
     ' ChangedLamps/Solenoids/GIStrings, ...).
     Private Shared _controllerProgID As String = "VPinMAME.Controller"
     Public Shared Property ControllerProgID() As String
@@ -42,7 +42,7 @@ Public Class B2SData
         Get
             If _vpinController Is Nothing OrElse IsStopped Then
                 _vpinController = CreateObject(_controllerProgID)
-                VPMHasTimeFence = _vpinController.GetType.GetProperty("TimeFence") IsNot Nothing
+                ControllerHasTimeFence = _vpinController.GetType.GetProperty("TimeFence") IsNot Nothing
                 If IsStopped Then
                     _vpinController.GameName = stoppedGameName
                     IsStopped = False

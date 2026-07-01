@@ -30,7 +30,7 @@ Public Class Server
     Private giStringThreshold As Integer = 4
 
     ' ProgID of the controller that reports GI strings as a binary on/off (0/1)
-    ' value instead of the legacy VPinController 0-8 dimming range (the P-ROC bridge).
+    ' value instead of the legacy VPinMAME 0-8 dimming range (the P-ROC bridge).
     ' For this controller the GI threshold is forced to 0 so any non-zero value
     ' counts as on; without it the default "state > 4" test leaves GI dark.
     Private Const BinaryGIControllerProgID As String = "VPROC.Controller"
@@ -42,7 +42,7 @@ Public Class Server
     ' Generation token claimed in New(); compared against
     ' B2SData.ActiveGeneration in Stop() so an orphan instance (one whose
     ' table session has been superseded by a newer Server) cannot tear down
-    ' the shared VPinController controller the newer session is using.
+    ' the shared controller the newer session is using.
     Private myGeneration As Integer = 0
 
     Public Shared errorlog As Log = Nothing
@@ -69,7 +69,7 @@ Public Class Server
             ' instance (via Timer_Tick), so leaving it running would keep
             ' the instance alive after VPX has released its COM reference,
             ' producing a "zombie" that can later tear down the shared
-            ' VPinController controller a newer game session is using.
+            ' controller a newer game session is using.
             Try
                 If timer IsNot Nothing Then
                     timer.Stop()
@@ -120,18 +120,18 @@ Public Class Server
     Public Sub New()
 
         ' Claim a fresh generation token. Used by Stop() to refuse to tear
-        ' down the shared VPinController controller when an older (now-orphaned)
+        ' down the shared controller when an older (now-orphaned)
         ' Server instance's timer fires after a newer game has started.
         myGeneration = B2SData.NextGeneration()
 
-        ' Force a fresh VPinController controller for this new Server instance.
+        ' Force a fresh controller for this new Server instance.
         ' The static _vpinController may still hold an RCW pointing at a
         ' controller whose RPC/STA host went away when the previous game
         ' ended; reusing that RCW would surface as COMException 0x800706BA
         ' on the first ChangedLamps/Solenoids/GIStrings call in this game.
         B2SData.DiscardController()
 
-        ' Reset the wrapped-controller ProgID to the VPinController default for each
+        ' Reset the wrapped-controller ProgID to the VPinMAME default for each
         ' fresh table. ControllerProgID is process-wide (Shared), so without
         ' this a table that selected an alternative controller could leave it
         ' set for the next table launched in the same VPX process. This runs
@@ -429,7 +429,7 @@ Public Class Server
 
     Public WriteOnly Property TimeFence() As Double
         Set(ByVal value As Double)
-            If B2SData.VPMHasTimeFence Then VPinController.TimeFence = value
+            If B2SData.ControllerHasTimeFence Then VPinController.TimeFence = value
         End Set
     End Property
 
@@ -515,7 +515,7 @@ Public Class Server
             End Try
 
             Try
-                ' Only tear down the process-wide VPinController controller if this
+                ' Only tear down the process-wide controller if this
                 ' Server instance is still the active owner. An "orphan"
                 ' instance (e.g. a previous game's zombie whose timer is
                 ' firing one last time) must NOT stop the controller a newer
