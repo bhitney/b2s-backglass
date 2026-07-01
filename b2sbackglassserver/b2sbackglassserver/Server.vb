@@ -29,6 +29,11 @@ Public Class Server
     Private lampThreshold As Integer = 0
     Private giStringThreshold As Integer = 4
 
+    ' ProgID of the controller that reports GI strings as a binary on/off (0/1)
+    ' value instead of the legacy VPinMAME 0-8 dimming range (the P-ROC bridge).
+    ' For this controller the GI threshold is forced to 0 so any non-zero value
+    ' counts as on; without it the default "state > 4" test leaves GI dark.
+    Private Const BinaryGIControllerProgID As String = "VPROC.Controller"
     Private isChangedLampsCalled As Boolean = False
     Private isChangedSolenoidsCalled As Boolean = False
     Private isChangedGIStringsCalled As Boolean = False
@@ -350,6 +355,9 @@ Public Class Server
         End Get
         Set(ByVal value As String)
             B2SData.ControllerProgID = value
+            If String.Equals(value, BinaryGIControllerProgID, StringComparison.OrdinalIgnoreCase) Then
+                giStringThreshold = 0
+            End If
         End Set
     End Property
 
@@ -1651,6 +1659,11 @@ Public Class Server
             ' For this new mode, we now hardcode a value 64, if the lamp intensity exceed this value, it is binary 1
             If number = 2 Then lampThreshold = If(value = 2, 64, 0)
             If number = 2 Then giStringThreshold = If(value = 2, 64, 4)
+
+            'If SolMask should be set (not currently used by PROC) we need to ensure giStringThreshold is correct
+            If String.Equals(B2SData.ControllerProgID, BinaryGIControllerProgID, StringComparison.OrdinalIgnoreCase) Then
+                giStringThreshold = 0
+            End If
         End Set
     End Property
 
