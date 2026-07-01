@@ -30,7 +30,7 @@ Public Class Server
     Private giStringThreshold As Integer = 4
 
     ' ProgID of the controller that reports GI strings as a binary on/off (0/1)
-    ' value instead of the legacy VPinMAME 0-8 dimming range (the P-ROC bridge).
+    ' value instead of the legacy VPinController 0-8 dimming range (the P-ROC bridge).
     ' For this controller the GI threshold is forced to 0 so any non-zero value
     ' counts as on; without it the default "state > 4" test leaves GI dark.
     Private Const BinaryGIControllerProgID As String = "VPROC.Controller"
@@ -42,7 +42,7 @@ Public Class Server
     ' Generation token claimed in New(); compared against
     ' B2SData.ActiveGeneration in Stop() so an orphan instance (one whose
     ' table session has been superseded by a newer Server) cannot tear down
-    ' the shared VPinMAME controller the newer session is using.
+    ' the shared VPinController controller the newer session is using.
     Private myGeneration As Integer = 0
 
     Public Shared errorlog As Log = Nothing
@@ -69,7 +69,7 @@ Public Class Server
             ' instance (via Timer_Tick), so leaving it running would keep
             ' the instance alive after VPX has released its COM reference,
             ' producing a "zombie" that can later tear down the shared
-            ' VPinMAME controller a newer game session is using.
+            ' VPinController controller a newer game session is using.
             Try
                 If timer IsNot Nothing Then
                     timer.Stop()
@@ -120,18 +120,18 @@ Public Class Server
     Public Sub New()
 
         ' Claim a fresh generation token. Used by Stop() to refuse to tear
-        ' down the shared VPinMAME controller when an older (now-orphaned)
+        ' down the shared VPinController controller when an older (now-orphaned)
         ' Server instance's timer fires after a newer game has started.
         myGeneration = B2SData.NextGeneration()
 
-        ' Force a fresh VPinMAME controller for this new Server instance.
-        ' The static _vpinmame may still hold an RCW pointing at a
+        ' Force a fresh VPinController controller for this new Server instance.
+        ' The static _vpinController may still hold an RCW pointing at a
         ' controller whose RPC/STA host went away when the previous game
         ' ended; reusing that RCW would surface as COMException 0x800706BA
         ' on the first ChangedLamps/Solenoids/GIStrings call in this game.
         B2SData.DiscardController()
 
-        ' Reset the wrapped-controller ProgID to the VPinMAME default for each
+        ' Reset the wrapped-controller ProgID to the VPinController default for each
         ' fresh table. ControllerProgID is process-wide (Shared), so without
         ' this a table that selected an alternative controller could leave it
         ' set for the next table launched in the same VPX process. This runs
@@ -310,9 +310,9 @@ Public Class Server
 
 #Region "Visual PinMAME COM object"
 
-    Private ReadOnly Property VPinMAME() As Object
+    Private ReadOnly Property VPinController() As Object
         Get
-            Return B2SData.VPinMAME
+            Return B2SData.VPinController
         End Get
     End Property
 
@@ -363,17 +363,17 @@ Public Class Server
 
     Public Property GameName() As String
         Get
-            Return VPinMAME.GameName
+            Return VPinController.GameName
         End Get
         Set(ByVal value As String)
-            VPinMAME.GameName = value
+            VPinController.GameName = value
             B2SSettings.GameName = value
             B2SSettings.B2SName = String.Empty
         End Set
     End Property
     Public ReadOnly Property ROMName() As String
         Get
-            Return VPinMAME.ROMName
+            Return VPinController.ROMName
         End Get
     End Property
     Public Property B2SName() As String
@@ -406,20 +406,20 @@ Public Class Server
 
     Public ReadOnly Property Games(ByVal gamename As String) As Object
         Get
-            Return VPinMAME.Games(gamename)
+            Return VPinController.Games(gamename)
         End Get
     End Property
 
     Public ReadOnly Property Settings() As Object
         Get
-            Return VPinMAME.Settings
+            Return VPinController.Settings
         End Get
     End Property
 
     Public ReadOnly Property Running() As Boolean
         Get
             Try
-                Return VPinMAME.Running
+                Return VPinController.Running
             Catch ex As Exception
                 errorlog.WriteLogEntry(DateTime.Now & ": Get Running ('" & ex.Message & "')")
                 Return False
@@ -429,14 +429,14 @@ Public Class Server
 
     Public WriteOnly Property TimeFence() As Double
         Set(ByVal value As Double)
-            If B2SData.VPMHasTimeFence Then VPinMAME.TimeFence = value
+            If B2SData.VPMHasTimeFence Then VPinController.TimeFence = value
         End Set
     End Property
 
     Public Property Pause() As Boolean
         Get
             Try
-                Return VPinMAME.Pause
+                Return VPinController.Pause
             Catch ex As Exception
                 errorlog.WriteLogEntry(DateTime.Now & ": Get Pause ('" & ex.Message & "')")
                 Return False
@@ -444,7 +444,7 @@ Public Class Server
         End Get
         Set(ByVal value As Boolean)
             Try
-                VPinMAME.Pause = value
+                VPinController.Pause = value
                 If B2SSettings.ArePluginsOn Then
                     If value Then
                         B2SSettings.PluginHost.PinMamePause()
@@ -460,13 +460,13 @@ Public Class Server
 
     Public ReadOnly Property Version() As String
         Get
-            Return VPinMAME.Version
+            Return VPinController.Version
         End Get
     End Property
 
     Public ReadOnly Property PMBuildVersion() As Double
         Get
-            Return VPinMAME.PMBuildVersion
+            Return VPinController.PMBuildVersion
         End Get
     End Property
 
@@ -488,7 +488,7 @@ Public Class Server
         If B2SSettings.IsROMControlled Then
 
             ' run VPM
-            VPinMAME.Run(handle)
+            VPinController.Run(handle)
 
             ' maybe run plugins
             If B2SSettings.ArePluginsOn Then
@@ -515,7 +515,7 @@ Public Class Server
             End Try
 
             Try
-                ' Only tear down the process-wide VPinMAME controller if this
+                ' Only tear down the process-wide VPinController controller if this
                 ' Server instance is still the active owner. An "orphan"
                 ' instance (e.g. a previous game's zombie whose timer is
                 ' firing one last time) must NOT stop the controller a newer
@@ -559,61 +559,61 @@ Public Class Server
 
     Public Property SplashInfoLine() As String
         Get
-            Return VPinMAME.SplashInfoLine
+            Return VPinController.SplashInfoLine
         End Get
         Set(ByVal value As String)
-            VPinMAME.SplashInfoLine = value
+            VPinController.SplashInfoLine = value
         End Set
     End Property
 
     Public Property ShowFrame() As Boolean
         Get
-            Return VPinMAME.ShowFrame
+            Return VPinController.ShowFrame
         End Get
         Set(ByVal value As Boolean)
-            VPinMAME.ShowFrame = value
+            VPinController.ShowFrame = value
         End Set
     End Property
     Public Property ShowTitle() As Boolean
         Get
-            Return VPinMAME.ShowTitle
+            Return VPinController.ShowTitle
         End Get
         Set(ByVal value As Boolean)
-            VPinMAME.ShowTitle = value
+            VPinController.ShowTitle = value
         End Set
     End Property
     Public Property ShowDMDOnly() As Boolean
         Get
-            Return VPinMAME.ShowDMDOnly
+            Return VPinController.ShowDMDOnly
         End Get
         Set(ByVal value As Boolean)
-            VPinMAME.ShowDMDOnly = value
+            VPinController.ShowDMDOnly = value
         End Set
     End Property
     Public Property ShowPinDMD() As Boolean
         Get
-            Return VPinMAME.ShowPinDMD
+            Return VPinController.ShowPinDMD
         End Get
         Set(ByVal value As Boolean)
-            VPinMAME.ShowPinDMD = value
+            VPinController.ShowPinDMD = value
         End Set
     End Property
 
     Public Property LockDisplay() As Boolean
         Get
-            Return VPinMAME.LockDisplay
+            Return VPinController.LockDisplay
         End Get
         Set(ByVal value As Boolean)
-            VPinMAME.LockDisplay = value
+            VPinController.LockDisplay = value
         End Set
     End Property
 
     Public Property DoubleSize() As Boolean
         Get
-            Return VPinMAME.DoubleSize
+            Return VPinController.DoubleSize
         End Get
         Set(ByVal value As Boolean)
-            VPinMAME.DoubleSize = value
+            VPinController.DoubleSize = value
         End Set
     End Property
 
@@ -627,30 +627,30 @@ Public Class Server
             If B2SSettings.HideDMD <> Windows.Forms.CheckState.Indeterminate Then
                 _hidden = (B2SSettings.HideDMD = Windows.Forms.CheckState.Checked)
             End If
-            VPinMAME.hidden = _hidden 'If(B2SData.IsBackglassStartedAsEXE, value, True)
+            VPinController.hidden = _hidden 'If(B2SData.IsBackglassStartedAsEXE, value, True)
         End Set
     End Property
 
     Public Sub SetDisplayPosition(ByVal x As Object, ByVal y As Object, Optional ByVal handle As Object = Nothing)
         If handle <> Nothing Then
-            VPinMAME.SetDisplayPosition(x, y, handle)
+            VPinController.SetDisplayPosition(x, y, handle)
         Else
-            VPinMAME.SetDisplayPosition(x, y)
+            VPinController.SetDisplayPosition(x, y)
         End If
     End Sub
 
     Public Sub ShowOptsDialog(ByVal handle As Object)
-        VPinMAME.ShowOptsDialog(handle)
+        VPinController.ShowOptsDialog(handle)
     End Sub
     Public Sub ShowPathesDialog(ByVal handle As Object)
-        VPinMAME.ShowPathesDialog(handle)
+        VPinController.ShowPathesDialog(handle)
     End Sub
     Public Sub ShowAboutDialog(ByVal handle As Object)
-        VPinMAME.ShowAboutDialog(handle)
+        VPinController.ShowAboutDialog(handle)
     End Sub
 
     Public Sub CheckROMS(ByVal showoptions As Object, ByVal handle As Object)
-        VPinMAME.CheckROMS(showoptions, handle)
+        VPinController.CheckROMS(showoptions, handle)
     End Sub
 
     Public Property PuPHide() As Boolean              'NB change
@@ -674,19 +674,19 @@ Public Class Server
 
     Public Property HandleKeyboard() As Boolean
         Get
-            Return VPinMAME.HandleKeyboard
+            Return VPinController.HandleKeyboard
         End Get
         Set(ByVal value As Boolean)
-            VPinMAME.HandleKeyboard = value
+            VPinController.HandleKeyboard = value
         End Set
     End Property
 
     Public Property HandleMechanics() As Int16
         Get
-            Return VPinMAME.HandleMechanics
+            Return VPinController.HandleMechanics
         End Get
         Set(ByVal value As Int16)
-            VPinMAME.HandleMechanics = value
+            VPinController.HandleMechanics = value
         End Set
     End Property
 
@@ -705,7 +705,7 @@ Public Class Server
     Public ReadOnly Property ChangedLamps() As Object
         Get
             isChangedLampsCalled = True
-            Dim chg As Object = VPinMAME.ChangedLamps()
+            Dim chg As Object = VPinController.ChangedLamps()
             Try
                 If B2SData.GetLampsData() Then
                     CheckLamps(DirectCast(chg, Object(,)))
@@ -723,7 +723,7 @@ Public Class Server
     Public ReadOnly Property ChangedSolenoids() As Object
         Get
             isChangedSolenoidsCalled = True
-            Dim chg As Object = VPinMAME.ChangedSolenoids()
+            Dim chg As Object = VPinController.ChangedSolenoids()
             Try
                 If B2SData.GetSolenoidsData() Then
                     CheckSolenoids(DirectCast(chg, Object(,)))
@@ -741,7 +741,7 @@ Public Class Server
     Public ReadOnly Property ChangedGIStrings() As Object
         Get
             isChangedGIStringsCalled = True
-            Dim chg As Object = VPinMAME.ChangedGIStrings()
+            Dim chg As Object = VPinController.ChangedGIStrings()
             Try
                 If B2SData.GetGIStringsData() Then
                     CheckGIStrings(DirectCast(chg, Object(,)))
@@ -759,7 +759,7 @@ Public Class Server
     Public ReadOnly Property ChangedLEDs(ByVal mask2 As Object, ByVal mask1 As Object, Optional ByVal mask3 As Object = 0, Optional ByVal mask4 As Object = 0) As Object
         Get
             isChangedLEDsCalled = True
-            Dim chg As Object = VPinMAME.ChangedLEDs(mask2, mask1, mask3, mask4) ' (&HFFFFFFFF, &HFFFFFFFF) 
+            Dim chg As Object = VPinController.ChangedLEDs(mask2, mask1, mask3, mask4) ' (&HFFFFFFFF, &HFFFFFFFF) 
             Try
                 If B2SData.GetLEDsData() Then
                     CheckLEDs(DirectCast(chg, Object(,)))
@@ -777,7 +777,7 @@ Public Class Server
     Public ReadOnly Property NewSoundCommands() As Object
         Get
             Try
-                Dim chg As Object = VPinMAME.NewSoundCommands()
+                Dim chg As Object = VPinController.NewSoundCommands()
                 Return chg
             Catch ex As Exception
                 errorlog.WriteLogEntry(DateTime.Now & ": NewSoundCommands ('" & ex.Message & "')")
@@ -1568,28 +1568,28 @@ Public Class Server
 
     Public ReadOnly Property Lamp(ByVal number As Object) As Boolean
         Get
-            Return VPinMAME.Lamp(number)
+            Return VPinController.Lamp(number)
         End Get
     End Property
 
     Public ReadOnly Property Solenoid(ByVal number As Object) As Boolean
         Get
-            Return VPinMAME.Solenoid(number)
+            Return VPinController.Solenoid(number)
         End Get
     End Property
 
     Public ReadOnly Property GIString(ByVal number As Object) As Boolean
         Get
-            Return VPinMAME.GIString(number)
+            Return VPinController.GIString(number)
         End Get
     End Property
 
     Public Property Switch(ByVal number As Object) As Boolean
         Get
-            Return VPinMAME.Switch(number)
+            Return VPinController.Switch(number)
         End Get
         Set(ByVal value As Boolean)
-            VPinMAME.Switch(number) = value
+            VPinController.Switch(number) = value
             If B2SSettings.ArePluginsOn AndAlso B2SSettings.PluginHost.Plugins.Count > 0 Then
                 If IsNumeric(number) Then
                     B2SSettings.PluginHost.DataReceive(Convert.ToChar("W"), Convert.ToInt32(number), If(value, 1, 0))
@@ -1601,7 +1601,7 @@ Public Class Server
     'Private statelogMech As Log = New Log("GetMech")
     Public Property Mech(ByVal number As Object) As Integer
         Get
-            Dim value As Integer = VPinMAME.Mech(number)
+            Dim value As Integer = VPinController.Mech(number)
             If B2SSettings.ArePluginsOn AndAlso B2SSettings.PluginHost.Plugins.Count > 0 Then
                 If IsNumeric(number) Then
                     B2SSettings.PluginHost.DataReceive(Convert.ToChar("M"), Convert.ToInt32(number), value)
@@ -1610,7 +1610,7 @@ Public Class Server
             Return value
         End Get
         Set(ByVal value As Integer)
-            VPinMAME.Mech(number) = value
+            VPinController.Mech(number) = value
             If B2SSettings.ArePluginsOn AndAlso B2SSettings.PluginHost.Plugins.Count > 0 Then
                 If IsNumeric(number) Then
                     B2SSettings.PluginHost.DataReceive(Convert.ToChar("M"), Convert.ToInt32(number), value)
@@ -1620,8 +1620,8 @@ Public Class Server
     End Property
     Public ReadOnly Property GetMech(ByVal number As Object) As Object
         Get
-            'Return VPinMAME.GetMech(number)
-            Dim mech As Object = VPinMAME.GetMech(number)
+            'Return VPinController.GetMech(number)
+            Dim mech As Object = VPinController.GetMech(number)
             If B2SData.IsBackglassRunning AndAlso
                 (B2SData.IsBackglassStartedAsEXE OrElse B2SData.UseRomMechs OrElse B2SData.TestMode OrElse B2SStatistics.LogStatistics) AndAlso
                 Not B2SSettings.AllOff Then
@@ -1638,19 +1638,19 @@ Public Class Server
 
     Public Property Dip(ByVal number As Object) As Integer
         Get
-            Return VPinMAME.Dip(number)
+            Return VPinController.Dip(number)
         End Get
         Set(ByVal value As Integer)
-            VPinMAME.Dip(number) = value
+            VPinController.Dip(number) = value
         End Set
     End Property
 
     Public Property SolMask(ByVal number As Object) As Integer
         Get
-            Return VPinMAME.SolMask(number)
+            Return VPinController.SolMask(number)
         End Get
         Set(ByVal value As Integer)
-            VPinMAME.SolMask(number) = value
+            VPinController.SolMask(number) = value
 
             'There is a new setting for VPinMame.SolMask(2) to set the output mode:
             ' 0 = default
@@ -1669,46 +1669,46 @@ Public Class Server
 
     Public ReadOnly Property RawDmdWidth As Integer
         Get
-            Return VPinMAME.RawDmdWidth
+            Return VPinController.RawDmdWidth
         End Get
     End Property
 
     Public ReadOnly Property RawDmdHeight As Integer
         Get
-            Return VPinMAME.RawDmdHeight
+            Return VPinController.RawDmdHeight
         End Get
     End Property
 
     Public ReadOnly Property RawDmdPixels As Object
         Get
-            Return VPinMAME.RawDmdPixels
+            Return VPinController.RawDmdPixels
         End Get
     End Property
 
     Public ReadOnly Property RawDmdColoredPixels As Object
         Get
-            Return VPinMAME.RawDmdColoredPixels
+            Return VPinController.RawDmdColoredPixels
         End Get
     End Property
 
     Public ReadOnly Property ChangedNVRAM As Object
         Get
-            Return VPinMAME.ChangedNVRAM
+            Return VPinController.ChangedNVRAM
         End Get
     End Property
 
     Public ReadOnly Property NVRAM As Object
         Get
-            Return VPinMAME.NVRAM
+            Return VPinController.NVRAM
         End Get
     End Property
 
     Public Property SoundMode As Integer
         Get
-            Return VPinMAME.SoundMode
+            Return VPinController.SoundMode
         End Get
         Set(ByVal value As Integer)
-            VPinMAME.SoundMode = value
+            VPinController.SoundMode = value
         End Set
     End Property
 
@@ -1762,7 +1762,7 @@ Public Class Server
 #End Region
 
 
-#Region "non VPinMAME support"
+#Region "non VPinController support"
 
     ' backup method to set data
     Public Sub B2SSetData(ByVal idORname As Object, ByVal value As Object)
@@ -2073,7 +2073,7 @@ Public Class Server
 
     End Sub
 
-#Region "private non VPinMAME support"
+#Region "private non VPinController support"
 
     Private Sub MyB2SSetData(ByVal id As Integer, ByVal value As Integer)
 
@@ -2940,7 +2940,7 @@ Public Class Server
                     process.Start()
 
                     If B2SSettings.IsROMControlled Then
-                        VPinMAME.hidden = If((B2SSettings.HideDMD = Windows.Forms.CheckState.Indeterminate), Hidden, (B2SSettings.HideDMD = Windows.Forms.CheckState.Checked)) ' Hidden OrElse B2SSettings.HideDMD
+                        VPinController.hidden = If((B2SSettings.HideDMD = Windows.Forms.CheckState.Indeterminate), Hidden, (B2SSettings.HideDMD = Windows.Forms.CheckState.Checked)) ' Hidden OrElse B2SSettings.HideDMD
                     End If
 
                     B2SData.IsBackglassVisible = True
@@ -2964,7 +2964,7 @@ Public Class Server
                     End If
 
                     If B2SSettings.IsROMControlled Then
-                        VPinMAME.hidden = If((B2SSettings.HideDMD = Windows.Forms.CheckState.Indeterminate), Hidden, (B2SSettings.HideDMD = Windows.Forms.CheckState.Checked)) ' B2SData.UseLEDs OrElse B2SData.UseLEDDisplays OrElse B2SData.UseReels OrElse B2SSettings.HideDMD
+                        VPinController.hidden = If((B2SSettings.HideDMD = Windows.Forms.CheckState.Indeterminate), Hidden, (B2SSettings.HideDMD = Windows.Forms.CheckState.Checked)) ' B2SData.UseLEDs OrElse B2SData.UseLEDDisplays OrElse B2SData.UseReels OrElse B2SSettings.HideDMD
                     End If
 
                     formBackglass.Show()
@@ -2992,8 +2992,8 @@ Public Class Server
                 formBackglass = New formBackglass(True)
             End If
 
-            If VPinMAME IsNot Nothing Then
-                VPinMAME.hidden = If((B2SSettings.HideDMD = Windows.Forms.CheckState.Indeterminate), Hidden, (B2SSettings.HideDMD = Windows.Forms.CheckState.Checked)) ' B2SData.UseLEDs OrElse B2SData.UseLEDDisplays OrElse B2SData.UseReels OrElse B2SSettings.HideDMD
+            If VPinController IsNot Nothing Then
+                VPinController.hidden = If((B2SSettings.HideDMD = Windows.Forms.CheckState.Indeterminate), Hidden, (B2SSettings.HideDMD = Windows.Forms.CheckState.Checked)) ' B2SData.UseLEDs OrElse B2SData.UseLEDDisplays OrElse B2SData.UseReels OrElse B2SSettings.HideDMD
             End If
 
             formBackglass.Show()
